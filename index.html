@@ -221,7 +221,7 @@ class PortugolError extends Error {
 const KEYWORDS = new Set([
   "algoritmo","declare","inicio","fim","se","entao","senao",
   "enquanto","faca","para","ate","passo","leia","escreva","escreval",
-  "e","ou","nao","mod","verdadeiro","falso","vetor","de",
+  "e","ou","nao","mod","verdadeiro","falso","vetor","de","tipo","registro",
   "inteiro","real","logico","caractere","cadeia","literal"
 ]);
 const TYPES = new Set(["inteiro","real","logico","caractere","cadeia","literal"]);
@@ -344,6 +344,7 @@ function lex(src) {
 /* ---------------------------------------------------------------- SINTÁTICO */
 function parse(tokens) {
   let p = 0;
+  const registros = Object.create(null);   // tipos registro definidos: chave -> {raw, fields}
   const peek = () => tokens[p];
   const next = () => tokens[p++];
   const atEnd = () => peek().type === "eof";
@@ -381,6 +382,10 @@ function parse(tokens) {
     if (peek().type !== "id" && peek().type !== "kw")
       err("O algoritmo precisa de um nome depois de 'Algoritmo'.");
     const nome = leNome("nome do algoritmo").raw;
+    if (peek().type === "semi") next();   // ';' opcional depois do nome do algoritmo
+
+    // definições de registro (Tipo ... registro ... Fim registro;) vêm ANTES do DECLARE
+    while (isKw("tipo")) parseRegistroDef();
 
     const decls = [];
     if (isKw("declare")) {
@@ -402,7 +407,35 @@ function parse(tokens) {
     // aceita ".", ";" ou fim do arquivo apos "Fim Algoritmo"
     if (peek().type === "dot" || peek().type === "semi") next();
 
-    return { nome, decls, corpo };
+    return { nome, registros, decls, corpo };
+  }
+
+  // ---- definição de registro:  Tipo Nome : registro  campo:tipo; ...  Fim registro;
+  function parseRegistroDef() {
+    expectKw("tipo");
+    const nomeTok = leNome("nome do tipo (registro)");
+    if (registros[nomeTok.key])
+      err(`Tipo "${nomeTok.raw}" definido mais de uma vez.`);
+    expect("colon", "':' depois do nome do tipo");
+    expectKw("registro");
+    const fields = [];
+    const vistos = Object.create(null);
+    while (!isKw("fim") && !atEnd()) {
+      const fnames = [ leNome("um nome de campo") ];
+      while (peek().type === "comma") { next(); fnames.push(leNome("um nome de campo")); }
+      expect("colon", "':' para indicar o tipo do campo");
+      const ftipo = parseTipoEscalar();   // campos escalares por enquanto
+      expect("semi", "';' ao final do campo");
+      for (const fn of fnames) {
+        if (vistos[fn.key]) err(`Campo "${fn.raw}" repetido no registro "${nomeTok.raw}".`);
+        vistos[fn.key] = true;
+        fields.push({ name: fn.key, raw: fn.raw, tipo: ftipo });
+      }
+    }
+    expectKw("fim");
+    expectKw("registro");
+    expect("semi", "';' depois de 'Fim registro'");
+    registros[nomeTok.key] = { raw: nomeTok.raw, fields };
   }
 
   // ---- tipo: escalar (inteiro, real, ...) ou vetor[lo..hi; ...] de <base>
@@ -411,8 +444,19 @@ function parse(tokens) {
       err("Esperava um tipo (inteiro, real, logico, caractere, cadeia ou literal).");
     return next().value;
   }
+  // tipo base de uma variável ou de um vetor: escalar OU um registro já definido
+  function parseBase() {
+    if (peek().type === "kw" && TYPES.has(peek().value)) return next().value;
+    if (peek().type === "id") {
+      const t = next().value;
+      if (!registros[t.key])
+        err(`Tipo "${t.raw}" não foi definido. Defina 'Tipo ${t.raw} : registro ... Fim registro;' antes do DECLARE.`);
+      return { record: t.key, raw: t.raw };
+    }
+    err("Esperava um tipo (inteiro, real, logico, caractere, cadeia, literal) ou um registro definido.");
+  }
   function parseTipo() {
-    if (!isKw("vetor")) return parseTipoEscalar();
+    if (!isKw("vetor")) return parseBase();
     next(); // vetor
     expect("lbracket", "'[' para as dimensões do vetor");
     const dims = [];
@@ -424,7 +468,7 @@ function parse(tokens) {
     } while (aceitaSepDim());
     expect("rbracket", "']' ao final das dimensões do vetor");
     expectKw("de");
-    const base = parseTipoEscalar();
+    const base = parseBase();
     return { array: true, dims, base };
   }
   // separadores de dimensão/índice: aceita ';' ou ','
@@ -467,12 +511,18 @@ function parse(tokens) {
     expect("rbracket", "']' depois do índice do vetor");
     return idx;
   }
-  // lê um destino de atribuição/leitura: nome  ou  nome[i]  ou  nome[i;j]
+  // lê um destino: nome | nome[i] | nome[i;j] | nome.campo | nome[i].campo
   function parseLValue() {
     const alvo = leNome("uma variável");
     const line = tokens[p-1].line;
     const indices = (peek().type === "lbracket") ? parseIndices() : null;
-    return { name: alvo.key, raw: alvo.raw, indices, line };
+    let field = null, fieldRaw = null;
+    if (peek().type === "dot") {
+      next();
+      const f = leNome("um nome de campo");
+      field = f.key; fieldRaw = f.raw;
+    }
+    return { name: alvo.key, raw: alvo.raw, indices, field, fieldRaw, line };
   }
 
   function parseAtribuicao() {
@@ -481,9 +531,7 @@ function parse(tokens) {
     next();
     const expr = parseExpr();
     expect("semi", "';' ao final do comando");
-    if (alvo.indices)
-      return { type: "assignIndex", name: alvo.name, raw: alvo.raw, indices: alvo.indices, expr, line: alvo.line };
-    return { type: "assign", name: alvo.name, raw: alvo.raw, expr, line: alvo.line };
+    return { type: "store", alvo, expr, line: alvo.line };
   }
 
   function parseLeia() {
@@ -615,11 +663,19 @@ function parse(tokens) {
     if (t.type === "kw" && t.value === "falso") { next(); return { type:"bool", value: false, line: t.line }; }
     if (t.type === "id") {
       next();
+      let node;
       if (peek().type === "lbracket") {
         const indices = parseIndices();
-        return { type:"index", name: t.value.key, raw: t.value.raw, indices, line: t.line };
+        node = { type:"index", name: t.value.key, raw: t.value.raw, indices, line: t.line };
+      } else {
+        node = { type:"var", name: t.value.key, raw: t.value.raw, line: t.line };
       }
-      return { type:"var", name: t.value.key, raw: t.value.raw, line: t.line };
+      if (peek().type === "dot") {
+        next();
+        const f = leNome("um nome de campo");
+        node = { type:"field", base: node, field: f.key, fieldRaw: f.raw, raw: t.value.raw, line: t.line };
+      }
+      return node;
     }
     if (t.type === "lparen") { next(); const e = parseExpr(); expect("rparen", "')'"); return e; }
     err(`Esperava um valor ou expressão, mas encontrei "${tokenText(t)}".`);
@@ -657,6 +713,7 @@ function* interpretar(programa) {
   const MAX_PASSOS = 5_000_000;
   let passos = 0;
 
+  const registros = programa.registros || Object.create(null);
   const vars = Object.create(null);   // valor atual
   const tipos = Object.create(null);  // tipo declarado
   for (const d of programa.decls) {
@@ -665,11 +722,30 @@ function* interpretar(programa) {
     if (d.tipo && d.tipo.array) {
       const info = montaVetor(d.tipo, d.raw);
       tipos[d.name] = info;
-      vars[d.name] = new Array(info.total).fill(tipoPadrao(info.base));
+      const arr = new Array(info.total);
+      for (let k = 0; k < info.total; k++) arr[k] = valorPadrao(info.base);
+      vars[d.name] = arr;
     } else {
       tipos[d.name] = d.tipo;
-      vars[d.name] = tipoPadrao(d.tipo);
+      vars[d.name] = valorPadrao(d.tipo);
     }
+  }
+
+  // valor inicial de um tipo base: escalar (string) ou registro ({record})
+  function valorPadrao(base) {
+    if (base && base.record) return novoRegistro(base.record);
+    return tipoPadrao(base);
+  }
+  function novoRegistro(recKey) {
+    const def = registros[recKey];
+    const obj = Object.create(null);
+    for (const f of def.fields) obj[f.name] = valorPadrao(f.tipo);
+    return obj;
+  }
+  function campoDe(recKey, fieldKey, fieldRaw, line) {
+    const def = registros[recKey];
+    for (const f of def.fields) if (f.name === fieldKey) return f;
+    throw new PortugolError(`O registro "${def.raw}" não tem o campo "${fieldRaw}".`, line);
   }
 
   // avalia os limites do vetor (constantes) e pré-calcula tamanhos
@@ -727,11 +803,51 @@ function* interpretar(programa) {
     return s;
   }
 
+  // coage para o tipo de uma variável escalar simples (usado no laço 'para')
   function coage(name, valor, line) {
     const tipo = tipos[name];
     if (tipo && tipo.array)
       throw new PortugolError(`"${name}" é um vetor; use um índice, ex: ${name}[1].`, line);
+    if (tipo && tipo.record)
+      throw new PortugolError(`"${name}" é um registro; use um campo, ex: ${name}.campo.`, line);
     return coageEscalar(tipo, valor, line, name);
+  }
+
+  // resolve um destino (nome | nome[i] | nome.campo | nome[i].campo)
+  // devolve { container, key, tipoEsc, rotulo } — sempre apontando pra uma célula escalar
+  function localAlvo(alvo, line) {
+    exigeDeclarada(alvo.name, alvo.raw, line);
+    const info = tipos[alvo.name];
+
+    if (alvo.indices) {
+      if (!(info && info.array))
+        throw new PortugolError(`"${alvo.raw}" não é um vetor, então não aceita índice.`, line);
+      const idxs = alvo.indices.map(e => avalia(e));
+      const off = calculaOffset(info, idxs, alvo.raw, line);
+      if (alvo.field) {
+        if (!(info.base && info.base.record))
+          throw new PortugolError(`"${alvo.raw}" não é um vetor de registro; não tem campos.`, line);
+        const rec = vars[alvo.name][off];
+        const f = campoDe(info.base.record, alvo.field, alvo.fieldRaw, line);
+        return { container: rec, key: alvo.field, tipoEsc: f.tipo, rotulo: `${alvo.raw}[..].${alvo.fieldRaw}` };
+      }
+      if (info.base && info.base.record)
+        throw new PortugolError(`"${alvo.raw}[..]" é um registro; use um campo, ex: ${alvo.raw}[..].campo.`, line);
+      return { container: vars[alvo.name], key: off, tipoEsc: info.base, rotulo: alvo.raw };
+    }
+
+    if (alvo.field) {
+      if (!(info && info.record))
+        throw new PortugolError(`"${alvo.raw}" não é um registro; não tem campos.`, line);
+      const f = campoDe(info.record, alvo.field, alvo.fieldRaw, line);
+      return { container: vars[alvo.name], key: alvo.field, tipoEsc: f.tipo, rotulo: `${alvo.raw}.${alvo.fieldRaw}` };
+    }
+
+    if (info && info.array)
+      throw new PortugolError(`"${alvo.raw}" é um vetor; use um índice, ex: ${alvo.raw}[1].`, line);
+    if (info && info.record)
+      throw new PortugolError(`"${alvo.raw}" é um registro; use um campo, ex: ${alvo.raw}.campo.`, line);
+    return { container: vars, key: alvo.name, tipoEsc: info, rotulo: alvo.raw };
   }
 
   function avalia(node) {
@@ -739,11 +855,15 @@ function* interpretar(programa) {
       case "num": return node.value;
       case "str": return node.value;
       case "bool": return node.value;
-      case "var":
+      case "var": {
         exigeDeclarada(node.name, node.raw, node.line);
-        if (tipos[node.name] && tipos[node.name].array)
+        const info = tipos[node.name];
+        if (info && info.array)
           throw new PortugolError(`"${node.raw}" é um vetor; use um índice, ex: ${node.raw}[1].`, node.line);
+        if (info && info.record)
+          throw new PortugolError(`"${node.raw}" é um registro; use um campo, ex: ${node.raw}.campo.`, node.line);
         return vars[node.name];
+      }
       case "index": {
         exigeDeclarada(node.name, node.raw, node.line);
         const info = tipos[node.name];
@@ -751,7 +871,18 @@ function* interpretar(programa) {
           throw new PortugolError(`"${node.raw}" não é um vetor, então não aceita índice.`, node.line);
         const idxs = node.indices.map(e => avalia(e));
         const off = calculaOffset(info, idxs, node.raw, node.line);
+        if (info.base && info.base.record)
+          throw new PortugolError(`"${node.raw}[..]" é um registro; use um campo, ex: ${node.raw}[..].campo.`, node.line);
         return vars[node.name][off];
+      }
+      case "field": {
+        const alvo = {
+          name: node.base.name, raw: node.base.raw,
+          indices: node.base.indices || null,
+          field: node.field, fieldRaw: node.fieldRaw
+        };
+        const ref = localAlvo(alvo, node.line);
+        return ref.container[ref.key];
       }
       case "un": {
         const v = avalia(node.expr);
@@ -846,36 +977,16 @@ function* interpretar(programa) {
       throw new PortugolError("Execução interrompida: possível laço infinito (muitos passos).", s.line);
 
     switch (s.type) {
-      case "assign": {
-        exigeDeclarada(s.name, s.raw, s.line);
-        vars[s.name] = coage(s.name, avalia(s.expr), s.line);
-        break;
-      }
-      case "assignIndex": {
-        exigeDeclarada(s.name, s.raw, s.line);
-        const info = tipos[s.name];
-        if (!(info && info.array))
-          throw new PortugolError(`"${s.raw}" não é um vetor, então não aceita índice.`, s.line);
-        const idxs = s.indices.map(e => avalia(e));
-        const off = calculaOffset(info, idxs, s.raw, s.line);
-        vars[s.name][off] = coageEscalar(info.base, avalia(s.expr), s.line, s.raw);
+      case "store": {
+        const ref = localAlvo(s.alvo, s.line);
+        ref.container[ref.key] = coageEscalar(ref.tipoEsc, avalia(s.expr), s.line, ref.rotulo);
         break;
       }
       case "leia": {
         for (const alvo of s.alvos) {
-          exigeDeclarada(alvo.name, alvo.raw, s.line);
-          const info = tipos[alvo.name];
-          if (info && info.array) {
-            const idxs = (alvo.indices || []).map(e => avalia(e));
-            const off = calculaOffset(info, idxs, alvo.raw, s.line);
-            const txt = yield { kind: "input", name: alvo.raw, tipo: info.base };
-            vars[alvo.name][off] = converteEntrada(txt, info.base, alvo.raw, s.line);
-          } else {
-            if (alvo.indices)
-              throw new PortugolError(`"${alvo.raw}" não é um vetor, então não aceita índice.`, s.line);
-            const txt = yield { kind: "input", name: alvo.raw, tipo: info };
-            vars[alvo.name] = converteEntrada(txt, info, alvo.raw, s.line);
-          }
+          const ref = localAlvo(alvo, s.line);
+          const txt = yield { kind: "input", name: ref.rotulo, tipo: ref.tipoEsc };
+          ref.container[ref.key] = converteEntrada(txt, ref.tipoEsc, ref.rotulo, s.line);
         }
         break;
       }
@@ -928,6 +1039,8 @@ const $examples= document.getElementById("examples");
 
 let rodando = false;
 let cancelar = false;
+let entradaAtual = null;              // { cancelar } da leitura em andamento (se houver)
+const CANCELADO = Symbol("cancelado"); // sentinela devolvido quando o Parar cancela um leia
 
 function atualizaGutter() {
   const linhas = $code.value.split("\n").length;
@@ -973,21 +1086,25 @@ function pedeEntrada(name, tipo) {
     $console.scrollTop = $console.scrollHeight;
     input.focus();
 
-    const enviar = () => {
-      const val = input.value;
+    // finaliza a leitura: por envio (Enter) ou por cancelamento (botão Parar)
+    const finalizar = (val, cancelado) => {
+      if (entradaAtual === estado) entradaAtual = null;
       row.remove();
-      escreveConsole(`» ${val}\n`, "echo");
-      resolve(val);
+      if (!cancelado) escreveConsole(`» ${val}\n`, "echo");
+      resolve(cancelado ? CANCELADO : val);
     };
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); enviar(); }
+      if (e.key === "Enter") { e.preventDefault(); finalizar(input.value, false); }
     });
+
+    const estado = { cancelar: () => finalizar(null, true) };
+    entradaAtual = estado;
   });
 }
 
 async function executar() {
   if (rodando) return;
-  rodando = true; cancelar = false;
+  rodando = true; cancelar = false; entradaAtual = null;
   $run.disabled = true; $stop.disabled = false;
   $console.innerHTML = "";
 
@@ -1021,7 +1138,7 @@ async function executar() {
         if (++contadorSaidas % 200 === 0) await new Promise(r => setTimeout(r, 0));
       } else if (value.kind === "input") {
         enviar = await pedeEntrada(value.name, value.tipo);
-        if (cancelar) { escreveConsole("\n[execução interrompida]\n", "sys-msg"); break; }
+        if (cancelar || enviar === CANCELADO) { escreveConsole("\n[execução interrompida]\n", "sys-msg"); break; }
       }
     }
   } catch (e) {
@@ -1036,12 +1153,16 @@ async function executar() {
 
 function encerra() {
   rodando = false;
+  entradaAtual = null;
   $run.disabled = false;
   $stop.disabled = true;
 }
 
 $run.addEventListener("click", executar);
-$stop.addEventListener("click", () => { cancelar = true; });
+$stop.addEventListener("click", () => {
+  cancelar = true;
+  if (entradaAtual) entradaAtual.cancelar();  // desbloqueia um leia que estava esperando
+});
 $clear.addEventListener("click", () => { $console.innerHTML = ""; });
 
 /* ------------------------------------------------------------------ EXEMPLOS */
@@ -1121,7 +1242,7 @@ Inicio
     escreva("Soma total = ", soma);
 Fim Algoritmo.`,
 
-  "Vetor (5 notas)": `Algoritmo Vetor
+  "Vetor (5 notas)": `Algoritmo Notas
 
 DECLARE
     notas : vetor[1..5] de real;
@@ -1163,6 +1284,31 @@ Inicio
         para j <- 1 ate 3 faca
             escreva("m[", i, ";", j, "] = ", m[i;j]);
         Fim para;
+    Fim para;
+Fim Algoritmo.`,
+
+  "Registro (cadastro)": `Algoritmo Cadastro
+
+Tipo Pessoa : registro
+    nome : literal;
+    idade : inteiro;
+Fim registro;
+
+DECLARE
+    turma : vetor[1..3] de Pessoa;
+    i : inteiro;
+
+Inicio
+    para i <- 1 ate 3 faca
+        escreva("Nome da pessoa ", i, ":");
+        leia(turma[i].nome);
+        escreva("Idade de ", turma[i].nome, ":");
+        leia(turma[i].idade);
+    Fim para;
+
+    escreva("--- Cadastro ---");
+    para i <- 1 ate 3 faca
+        escreva(turma[i].nome, " tem ", turma[i].idade, " anos");
     Fim para;
 Fim Algoritmo.`,
 };
