@@ -368,19 +368,26 @@ function parse(tokens) {
     if (t.type === "str") return `"${t.value}"`;
     return t.value;
   }
+  // lê um nome (variável/algoritmo); se vier palavra reservada, avisa com clareza
+  function leNome(contexto) {
+    if (peek().type === "kw")
+      err(`"${tokenText(peek())}" é uma palavra reservada e não pode ser usada como ${contexto}. Escolha outro nome.`);
+    return expect("id", contexto).value;
+  }
 
   // ---- programa
   function parsePrograma() {
     expectKw("algoritmo");
-    if (peek().type !== "id") err("O algoritmo precisa de um nome depois de 'Algoritmo'.");
-    const nome = next().value.raw;
+    if (peek().type !== "id" && peek().type !== "kw")
+      err("O algoritmo precisa de um nome depois de 'Algoritmo'.");
+    const nome = leNome("nome do algoritmo").raw;
 
     const decls = [];
     if (isKw("declare")) {
       next();
-      while (peek().type === "id") {
-        const names = [ next().value ];
-        while (peek().type === "comma") { next(); names.push(expect("id","um nome de variável").value); }
+      while (!isKw("inicio") && !atEnd()) {
+        const names = [ leNome("um nome de variável") ];
+        while (peek().type === "comma") { next(); names.push(leNome("um nome de variável")); }
         expect("colon", "':' (para indicar o tipo)");
         const tipo = parseTipo();
         expect("semi", "';' ao final da declaração");
@@ -462,7 +469,7 @@ function parse(tokens) {
   }
   // lê um destino de atribuição/leitura: nome  ou  nome[i]  ou  nome[i;j]
   function parseLValue() {
-    const alvo = expect("id", "uma variável").value;
+    const alvo = leNome("uma variável");
     const line = tokens[p-1].line;
     const indices = (peek().type === "lbracket") ? parseIndices() : null;
     return { name: alvo.key, raw: alvo.raw, indices, line };
@@ -521,7 +528,7 @@ function parse(tokens) {
   function parsePara() {
     const line = peek().line;
     next();
-    const varTok = expect("id", "uma variável de controle").value;
+    const varTok = leNome("uma variável de controle");
     if (!isOp("<-")) err("Esperava '<-' para o valor inicial do 'para'.");
     next();
     const inicio = parseExpr();
