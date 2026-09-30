@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portugol</title>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #161c2c;
+    --panel-2: #1c2436;
+    --border: #2a3350;
+    --text: #e6ebf5;
+    --muted: #8b96b0;
+    --accent: #4c9aff;
+    --ok: #4caf78;
+    --err: #ff6b6b;
+    --prompt: #ffcb6b;
+    --editor-bg: #11172480;
+    --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", Consolas, "Courier New", monospace;
+    --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 16px;
+    margin: 0;
+    letter-spacing: .5px;
+    font-weight: 600;
+  }
+  header h1 .dot { color: var(--accent); }
+  .spacer { flex: 1; }
+  .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  select, button {
+    font-family: var(--font-ui);
+    font-size: 13px;
+    border-radius: 7px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 7px 12px;
+    cursor: pointer;
+  }
+  select { padding-right: 8px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06101f; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.stop { background: var(--panel-2); }
+  button.stop:hover { border-color: var(--err); color: var(--err); }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 0;
+  }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .pane + .pane { border-left: 1px solid var(--border); }
+  .pane-header {
+    padding: 8px 14px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Editor */
+  .editor-wrap {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    background: var(--editor-bg);
+    overflow: hidden;
+  }
+  .gutter {
+    padding: 12px 8px 12px 12px;
+    text-align: right;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    user-select: none;
+    overflow: hidden;
+    background: #0d121d;
+    white-space: pre;
+  }
+  #code {
+    flex: 1;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 12px 14px;
+    white-space: pre;
+    overflow: auto;
+    tab-size: 4;
+  }
+
+  /* Console */
+  #console {
+    flex: 1;
+    overflow: auto;
+    padding: 12px 14px;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .out-line { white-space: pre-wrap; }
+  .echo { color: var(--accent); }
+  .err-msg { color: var(--err); }
+  .ok-msg { color: var(--ok); }
+  .sys-msg { color: var(--muted); font-style: italic; }
+  .input-row { display: flex; align-items: center; gap: 6px; }
+  .input-row .caret { color: var(--prompt); }
+  .input-row input {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px dashed var(--prompt);
+    color: var(--prompt);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    outline: none;
+    padding: 2px 0;
+  }
+
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+    .pane + .pane { border-left: 0; border-top: 1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Portugol<span class="dot">.</span></h1>
+    <div class="spacer"></div>
+    <div class="toolbar">
+      <select id="examples" title="Exemplos">
+        <option value="">Exemplos…</option>
+      </select>
+      <button id="clearBtn" title="Limpar console">Limpar</button>
+      <button id="stopBtn" class="stop" disabled>◼ Parar</button>
+      <button id="runBtn" class="primary">▶ Executar</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="pane">
+      <div class="pane-header">Código</div>
+      <div class="editor-wrap">
+        <div class="gutter" id="gutter">1</div>
+        <textarea id="code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      </div>
+    </section>
+    <section class="pane">
+      <div class="pane-header">Console</div>
+      <div id="console"></div>
+    </section>
+  </main>
+
+<script>
+"use strict";
+/* ============================================================================
+   PORTUGOL — interpretador (léxico → sintático → interpretador com generator)
+   Padrão custom:
+     Algoritmo NOME (nome obrigatorio)
+     DECLARE  var : tipo;
+     Inicio ... Fim Algoritmo.
+   Atribuicao: <-   |  Igualdade: =   |  Diferente: <> ou !=
+   Tipos: inteiro real logico caractere cadeia literal
+   Relacionais: > < >= <=   |  Aritmetica: + - * /  mod (ou %)
+   Logicos: e ou nao (ou && || !)
+   se (cond) entao ... senao ... fim se;
+   para i <- 1 ate N [passo P] faca ... Fim para;
+   enquanto (cond) faca ... Fim enquanto;
+   Palavras-chave: sem distincao de maiusculas/minusculas nem acentos.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- utilidades */
+function foldKeyword(s) {
+  // normaliza para casar palavra-chave: minusculo e sem acento
+  return s.toLowerCase()
+          .normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+class PortugolError extends Error {
+  constructor(msg, line) { super(msg); this.line = line; }
+}
+
+/* ------------------------------------------------------------------ LÉXICO */
+const KEYWORDS = new Set([
+  "algoritmo","declare","inicio","fim","se","entao","senao",
+  "enquanto","faca","para","ate","passo","leia","escreva","escreval",
+  "e","ou","nao","mod","verdadeiro","falso",
+  "inteiro","real","logico","caractere","cadeia","literal"
+]);
+const TYPES = new Set(["inteiro","real","logico","caractere","cadeia","literal"]);
+
+function lex(src) {
+  const tokens = [];
+  let i = 0, line = 1;
+  const n = src.length;
+
+  const push = (type, value) => tokens.push({ type, value, line });
+
+  while (i < n) {
+    const c = src[i];
+
+    // quebra de linha
+    if (c === "\n") { line++; i++; continue; }
+    // espacos
+    if (c === " " || c === "\t" || c === "\r") { i++; continue; }
+
+    // comentario de linha  //  (e tambem estilo VisuAlg)
+    if (c === "/" && src[i+1] === "/") {
+      while (i < n && src[i] !== "\n") i++;
+      continue;
+    }
+    // comentario de bloco  /* ... */
+    if (c === "/" && src[i+1] === "*") {
+      i += 2;
+      while (i < n && !(src[i] === "*" && src[i+1] === "/")) { if (src[i] === "\n") line++; i++; }
+      i += 2;
+      continue;
+    }
+    // comentario Pascal  { ... }
+    if (c === "{") {
+      i++;
+      while (i < n && src[i] !== "}") { if (src[i] === "\n") line++; i++; }
+      i++;
+      continue;
+    }
+
+    // numeros
+    if (c >= "0" && c <= "9") {
+      let start = i;
+      while (i < n && src[i] >= "0" && src[i] <= "9") i++;
+      let isReal = false;
+      if (src[i] === "." && src[i+1] >= "0" && src[i+1] <= "9") {
+        isReal = true; i++;
+        while (i < n && src[i] >= "0" && src[i] <= "9") i++;
+      }
+      const text = src.slice(start, i);
+      push("num", { value: parseFloat(text), isReal });
+      continue;
+    }
+
+    // strings  "..."  ou  '...'
+    if (c === '"' || c === "'") {
+      const quote = c; i++;
+      let str = "";
+      while (i < n && src[i] !== quote) {
+        if (src[i] === "\\") {
+          const nx = src[i+1];
+          if (nx === "n") str += "\n";
+          else if (nx === "t") str += "\t";
+          else if (nx === "\\") str += "\\";
+          else if (nx === quote) str += quote;
+          else str += nx;
+          i += 2;
+        } else {
+          if (src[i] === "\n") line++;
+          str += src[i]; i++;
+        }
+      }
+      if (i >= n) throw new PortugolError("Texto não fechado (falta fechar as aspas).", line);
+      i++; // fecha aspas
+      push("str", str);
+      continue;
+    }
+
+    // identificadores / palavras-chave
+    if (/[A-Za-zÀ-ÿ_]/.test(c)) {
+      let start = i;
+      while (i < n && /[A-Za-zÀ-ÿ0-9_]/.test(src[i])) i++;
+      const raw = src.slice(start, i);
+      const key = foldKeyword(raw);
+      if (KEYWORDS.has(key)) push("kw", key);
+      else push("id", { raw, key });
+      continue;
+    }
+
+    // operadores e pontuacao (2 chars primeiro)
+    const two = src.substr(i, 2);
+    if (two === "<-") { push("op", "<-"); i += 2; continue; }
+    if (two === "<>") { push("op", "<>"); i += 2; continue; }
+    if (two === "!=") { push("op", "<>"); i += 2; continue; }
+    if (two === ">=") { push("op", ">="); i += 2; continue; }
+    if (two === "<=") { push("op", "<="); i += 2; continue; }
+    if (two === "&&") { push("op", "e"); i += 2; continue; }
+    if (two === "||") { push("op", "ou"); i += 2; continue; }
+
+    if ("+-*/%".includes(c)) { push("op", c); i++; continue; }
+    if (c === "=") { push("op", "="); i++; continue; }
+    if (c === ">") { push("op", ">"); i++; continue; }
+    if (c === "<") { push("op", "<"); i++; continue; }
+    if (c === "!") { push("op", "nao"); i++; continue; }
+    if (c === "(") { push("lparen", "("); i++; continue; }
+    if (c === ")") { push("rparen", ")"); i++; continue; }
+    if (c === ",") { push("comma", ","); i++; continue; }
+    if (c === ";") { push("semi", ";"); i++; continue; }
+    if (c === ":") { push("colon", ":"); i++; continue; }
+    if (c === ".") { push("dot", "."); i++; continue; }
+
+    throw new PortugolError(`Caractere inesperado: "${c}"`, line);
+  }
+  push("eof", null);
+  return tokens;
+}
+
+/* ---------------------------------------------------------------- SINTÁTICO */
+function parse(tokens) {
+  let p = 0;
+  const peek = () => tokens[p];
+  const next = () => tokens[p++];
+  const atEnd = () => peek().type === "eof";
+
+  const isKw = (k) => peek().type === "kw" && peek().value === k;
+  const isOp = (o) => peek().type === "op" && peek().value === o;
+
+  function err(msg) { throw new PortugolError(msg, peek().line); }
+
+  function expectKw(k) {
+    if (!isKw(k)) err(`Esperava "${k}" mas encontrei "${tokenText(peek())}".`);
+    return next();
+  }
+  function expect(type, label) {
+    if (peek().type !== type) err(`Esperava ${label} mas encontrei "${tokenText(peek())}".`);
+    return next();
+  }
+  function tokenText(t) {
+    if (t.type === "eof") return "fim do código";
+    if (t.type === "id") return t.value.raw;
+    if (t.type === "num") return String(t.value.value);
+    if (t.type === "str") return `"${t.value}"`;
+    return t.value;
+  }
+
+  // ---- programa
+  function parsePrograma() {
+    expectKw("algoritmo");
+    if (peek().type !== "id") err("O algoritmo precisa de um nome depois de 'Algoritmo'.");
+    const nome = next().value.raw;
+
+    const decls = [];
+    if (isKw("declare")) {
+      next();
+      while (peek().type === "id") {
+        const names = [ next().value ];
+        while (peek().type === "comma") { next(); names.push(expect("id","um nome de variável").value); }
+        expect("colon", "':' (para indicar o tipo)");
+        if (!(peek().type === "kw" && TYPES.has(peek().value)))
+          err("Esperava um tipo (inteiro, real, logico, caractere, cadeia ou literal).");
+        const tipo = next().value;
+        expect("semi", "';' ao final da declaração");
+        for (const nm of names) decls.push({ name: nm.key, raw: nm.raw, tipo });
+      }
+    }
+
+    expectKw("inicio");
+    const corpo = parseBloco();
+    expectKw("fim");
+    expectKw("algoritmo");
+    // aceita ".", ";" ou fim do arquivo apos "Fim Algoritmo"
+    if (peek().type === "dot" || peek().type === "semi") next();
+
+    return { nome, decls, corpo };
+  }
+
+  // ---- bloco: sequência de comandos até 'fim' ou 'senao'
+  function parseBloco() {
+    const stmts = [];
+    while (!atEnd() && !isKw("fim") && !isKw("senao")) {
+      stmts.push(parseComando());
+    }
+    return stmts;
+  }
+
+  function parseComando() {
+    const t = peek();
+    if (t.type === "kw") {
+      switch (t.value) {
+        case "leia":     return parseLeia();
+        case "escreva":
+        case "escreval": return parseEscreva();
+        case "se":       return parseSe();
+        case "para":     return parsePara();
+        case "enquanto": return parseEnquanto();
+        default: err(`Comando inesperado: "${t.value}".`);
+      }
+    }
+    if (t.type === "id") return parseAtribuicao();
+    err(`Comando inválido começando em "${tokenText(t)}".`);
+  }
+
+  function parseAtribuicao() {
+    const alvo = next().value;         // id
+    const line = tokens[p-1].line;
+    if (!isOp("<-")) err(`Esperava '<-' para atribuir um valor a "${alvo.raw}".`);
+    next();
+    const expr = parseExpr();
+    expect("semi", "';' ao final do comando");
+    return { type: "assign", name: alvo.key, raw: alvo.raw, expr, line };
+  }
+
+  function parseLeia() {
+    const line = peek().line;
+    next();
+    expect("lparen", "'(' depois de leia");
+    const alvos = [ expect("id","uma variável para ler").value ];
+    while (peek().type === "comma") { next(); alvos.push(expect("id","uma variável").value); }
+    expect("rparen", "')'");
+    expect("semi", "';'");
+    return { type: "leia", alvos, line };
+  }
+
+  function parseEscreva() {
+    const line = peek().line;
+    next();
+    expect("lparen", "'(' depois de escreva");
+    const args = [];
+    if (peek().type !== "rparen") {
+      args.push(parseExpr());
+      while (peek().type === "comma") { next(); args.push(parseExpr()); }
+    }
+    expect("rparen", "')'");
+    expect("semi", "';'");
+    return { type: "escreva", args, line };
+  }
+
+  function parseSe() {
+    const line = peek().line;
+    next();
+    const cond = parseExpr();
+    expectKw("entao");
+    const entao = parseBloco();
+    let senao = null;
+    if (isKw("senao")) { next(); senao = parseBloco(); }
+    expectKw("fim");
+    expectKw("se");
+    expect("semi", "';' depois de 'fim se'");
+    return { type: "se", cond, entao, senao, line };
+  }
+
+  function parsePara() {
+    const line = peek().line;
+    next();
+    const varTok = expect("id", "uma variável de controle").value;
+    if (!isOp("<-")) err("Esperava '<-' para o valor inicial do 'para'.");
+    next();
+    const inicio = parseExpr();
+    expectKw("ate");
+    const fim = parseExpr();
+    let passo = null;
+    if (isKw("passo")) { next(); passo = parseExpr(); }
+    expectKw("faca");
+    const corpo = parseBloco();
+    expectKw("fim");
+    expectKw("para");
+    expect("semi", "';' depois de 'fim para'");
+    return { type: "para", varName: varTok.key, raw: varTok.raw, inicio, fim, passo, corpo, line };
+  }
+
+  function parseEnquanto() {
+    const line = peek().line;
+    next();
+    const cond = parseExpr();
+    expectKw("faca");
+    const corpo = parseBloco();
+    expectKw("fim");
+    expectKw("enquanto");
+    expect("semi", "';' depois de 'fim enquanto'");
+    return { type: "enquanto", cond, corpo, line };
+  }
+
+  /* ---- expressões (precedência) ----
+     ou > e > nao > relacional > aditivo > multiplicativo > unario > primario  */
+  function parseExpr() { return parseOu(); }
+
+  function parseOu() {
+    let left = parseE();
+    while (isKw("ou") || isOp("ou")) { const line = peek().line; next(); left = { type:"bin", op:"ou", left, right: parseE(), line }; }
+    return left;
+  }
+  function parseE() {
+    let left = parseNao();
+    while (isKw("e") || isOp("e")) { const line = peek().line; next(); left = { type:"bin", op:"e", left, right: parseNao(), line }; }
+    return left;
+  }
+  function parseNao() {
+    if (isKw("nao") || isOp("nao")) { const line = peek().line; next(); return { type:"un", op:"nao", expr: parseNao(), line }; }
+    return parseRel();
+  }
+  function parseRel() {
+    let left = parseAdd();
+    while (peek().type === "op" && ["=","<>",">","<",">=","<="].includes(peek().value)) {
+      const op = next().value; const line = tokens[p-1].line;
+      left = { type:"bin", op, left, right: parseAdd(), line };
+    }
+    return left;
+  }
+  function parseAdd() {
+    let left = parseMul();
+    while (peek().type === "op" && (peek().value === "+" || peek().value === "-")) {
+      const op = next().value; const line = tokens[p-1].line;
+      left = { type:"bin", op, left, right: parseMul(), line };
+    }
+    return left;
+  }
+  function parseMul() {
+    let left = parseUnario();
+    while ((peek().type === "op" && ["*","/","%"].includes(peek().value)) || isKw("mod")) {
+      const op = isKw("mod") ? "mod" : next().value;
+      if (op === "mod") next();
+      const line = tokens[p-1] ? tokens[p-1].line : peek().line;
+      left = { type:"bin", op: op === "%" ? "mod" : op, left, right: parseUnario(), line };
+    }
+    return left;
+  }
+  function parseUnario() {
+    if (peek().type === "op" && (peek().value === "-" || peek().value === "+")) {
+      const op = next().value; const line = tokens[p-1].line;
+      return { type:"un", op, expr: parseUnario(), line };
+    }
+    return parsePrimario();
+  }
+  function parsePrimario() {
+    const t = peek();
+    if (t.type === "num") { next(); return { type:"num", value: t.value.value, isReal: t.value.isReal, line: t.line }; }
+    if (t.type === "str") { next(); return { type:"str", value: t.value, line: t.line }; }
+    if (t.type === "kw" && t.value === "verdadeiro") { next(); return { type:"bool", value: true, line: t.line }; }
+    if (t.type === "kw" && t.value === "falso") { next(); return { type:"bool", value: false, line: t.line }; }
+    if (t.type === "id") { next(); return { type:"var", name: t.value.key, raw: t.value.raw, line: t.line }; }
+    if (t.type === "lparen") { next(); const e = parseExpr(); expect("rparen", "')'"); return e; }
+    err(`Esperava um valor ou expressão, mas encontrei "${tokenText(t)}".`);
+  }
+
+  const programa = parsePrograma();
+  if (!atEnd()) err(`Código extra depois do fim do algoritmo: "${tokenText(peek())}".`);
+  return programa;
+}
+
+/* -------------------------------------------------------------- INTERPRETADOR
+   Generator: dá `yield` num evento {kind:'output'|'input'} e retoma depois.  */
+
+function tipoPadrao(tipo) {
+  switch (tipo) {
+    case "inteiro":
+    case "real": return 0;
+    case "logico": return false;
+    default: return "";
+  }
+}
+
+function ehNumerico(tipo) { return tipo === "inteiro" || tipo === "real"; }
+
+function formataValor(v) {
+  if (typeof v === "boolean") return v ? "verdadeiro" : "falso";
+  if (typeof v === "number") {
+    if (Number.isInteger(v)) return String(v);
+    return String(v);
+  }
+  return String(v);
+}
+
+function* interpretar(programa) {
+  const MAX_PASSOS = 5_000_000;
+  let passos = 0;
+
+  const vars = Object.create(null);   // valor atual
+  const tipos = Object.create(null);  // tipo declarado
+  for (const d of programa.decls) {
+    if (tipos[d.name] !== undefined)
+      throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, undefined);
+    tipos[d.name] = d.tipo;
+    vars[d.name] = tipoPadrao(d.tipo);
+  }
+
+  function exigeDeclarada(name, raw, line) {
+    if (tipos[name] === undefined)
+      throw new PortugolError(`Variável "${raw}" não foi declarada no DECLARE.`, line);
+  }
+
+  function coage(name, valor, line) {
+    const tipo = tipos[name];
+    if (ehNumerico(tipo)) {
+      if (typeof valor !== "number")
+        throw new PortugolError(`Não dá pra guardar esse valor em "${name}" (${tipo}).`, line);
+      if (tipo === "inteiro" && !Number.isInteger(valor))
+        throw new PortugolError(`"${name}" é inteiro, mas o valor ${valor} tem casas decimais.`, line);
+      return valor;
+    }
+    if (tipo === "logico") {
+      if (typeof valor !== "boolean")
+        throw new PortugolError(`"${name}" é logico e só aceita verdadeiro/falso.`, line);
+      return valor;
+    }
+    // caractere / cadeia / literal
+    let s = formataValor(valor);
+    if (tipo === "caractere" && s.length > 1) s = s.slice(0, 1);
+    return s;
+  }
+
+  function avalia(node) {
+    switch (node.type) {
+      case "num": return node.value;
+      case "str": return node.value;
+      case "bool": return node.value;
+      case "var":
+        exigeDeclarada(node.name, node.raw, node.line);
+        return vars[node.name];
+      case "un": {
+        const v = avalia(node.expr);
+        if (node.op === "-") return -numero(v, node.line);
+        if (node.op === "+") return  numero(v, node.line);
+        if (node.op === "nao") return !logico(v, node.line);
+      }
+      case "bin": return binario(node);
+      default: throw new PortugolError("Expressão desconhecida.", node.line);
+    }
+  }
+
+  function numero(v, line) {
+    if (typeof v !== "number") throw new PortugolError("Esperava um número nesta operação.", line);
+    return v;
+  }
+  function logico(v, line) {
+    if (typeof v !== "boolean") throw new PortugolError("Esperava um valor lógico (verdadeiro/falso).", line);
+    return v;
+  }
+
+  function binario(node) {
+    const op = node.op;
+    if (op === "e")  return logico(avalia(node.left), node.line) && logico(avalia(node.right), node.line);
+    if (op === "ou") return logico(avalia(node.left), node.line) || logico(avalia(node.right), node.line);
+
+    const a = avalia(node.left);
+    const b = avalia(node.right);
+
+    if (op === "=")  return igual(a, b);
+    if (op === "<>") return !igual(a, b);
+
+    if (op === "+") {
+      if (typeof a === "string" || typeof b === "string") return formataValor(a) + formataValor(b);
+      return numero(a, node.line) + numero(b, node.line);
+    }
+    if (op === "-") return numero(a, node.line) - numero(b, node.line);
+    if (op === "*") return numero(a, node.line) * numero(b, node.line);
+    if (op === "/") {
+      const d = numero(b, node.line);
+      if (d === 0) throw new PortugolError("Divisão por zero.", node.line);
+      return numero(a, node.line) / d;
+    }
+    if (op === "mod") {
+      const d = numero(b, node.line);
+      if (d === 0) throw new PortugolError("Resto de divisão por zero.", node.line);
+      return numero(a, node.line) % d;
+    }
+    // relacionais
+    const x = numero(a, node.line), y = numero(b, node.line);
+    if (op === ">")  return x >  y;
+    if (op === "<")  return x <  y;
+    if (op === ">=") return x >= y;
+    if (op === "<=") return x <= y;
+    throw new PortugolError(`Operador desconhecido: ${op}.`, node.line);
+  }
+
+  function igual(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a === b;
+    if (typeof a === "boolean" && typeof b === "boolean") return a === b;
+    return formataValor(a) === formataValor(b);
+  }
+
+  function converteEntrada(txt, tipo, name, line) {
+    const s = txt.trim();
+    if (tipo === "inteiro") {
+      if (!/^[+-]?\d+$/.test(s)) throw new PortugolError(`"${name}" é inteiro; "${txt}" não é um número inteiro válido.`, line);
+      return parseInt(s, 10);
+    }
+    if (tipo === "real") {
+      const norm = s.replace(",", ".");
+      if (!/^[+-]?\d+(\.\d+)?$/.test(norm)) throw new PortugolError(`"${name}" é real; "${txt}" não é um número válido.`, line);
+      return parseFloat(norm);
+    }
+    if (tipo === "logico") {
+      const f = foldKeyword(s);
+      if (["verdadeiro","v","true","sim","1"].includes(f)) return true;
+      if (["falso","f","false","nao","0"].includes(f)) return false;
+      throw new PortugolError(`"${name}" é logico; digite verdadeiro ou falso.`, line);
+    }
+    if (tipo === "caractere") return s.slice(0, 1);
+    return txt; // cadeia / literal
+  }
+
+  // ---- execução (generator)
+  function* execBloco(stmts) {
+    for (const s of stmts) yield* execComando(s);
+  }
+
+  function* execComando(s) {
+    if (++passos > MAX_PASSOS)
+      throw new PortugolError("Execução interrompida: possível laço infinito (muitos passos).", s.line);
+
+    switch (s.type) {
+      case "assign": {
+        exigeDeclarada(s.name, s.raw, s.line);
+        vars[s.name] = coage(s.name, avalia(s.expr), s.line);
+        break;
+      }
+      case "leia": {
+        for (const alvo of s.alvos) {
+          exigeDeclarada(alvo.key, alvo.raw, s.line);
+          const txt = yield { kind: "input", name: alvo.raw, tipo: tipos[alvo.key] };
+          vars[alvo.key] = converteEntrada(txt, tipos[alvo.key], alvo.raw, s.line);
+        }
+        break;
+      }
+      case "escreva": {
+        const texto = s.args.map(a => formataValor(avalia(a))).join("");
+        yield { kind: "output", text: texto + "\n" };
+        break;
+      }
+      case "se": {
+        if (logico(avalia(s.cond), s.line)) yield* execBloco(s.entao);
+        else if (s.senao) yield* execBloco(s.senao);
+        break;
+      }
+      case "enquanto": {
+        while (logico(avalia(s.cond), s.line)) {
+          if (++passos > MAX_PASSOS) throw new PortugolError("Execução interrompida: possível laço infinito.", s.line);
+          yield* execBloco(s.corpo);
+        }
+        break;
+      }
+      case "para": {
+        exigeDeclarada(s.varName, s.raw, s.line);
+        let atual = numero(avalia(s.inicio), s.line);
+        const limite = numero(avalia(s.fim), s.line);
+        const passo = s.passo ? numero(avalia(s.passo), s.line) : 1;
+        if (passo === 0) throw new PortugolError("O 'passo' não pode ser zero.", s.line);
+        vars[s.varName] = coage(s.varName, atual, s.line);
+        while (passo > 0 ? vars[s.varName] <= limite : vars[s.varName] >= limite) {
+          if (++passos > MAX_PASSOS) throw new PortugolError("Execução interrompida: possível laço infinito.", s.line);
+          yield* execBloco(s.corpo);
+          vars[s.varName] = coage(s.varName, vars[s.varName] + passo, s.line);
+        }
+        break;
+      }
+      default: throw new PortugolError(`Comando desconhecido: ${s.type}.`, s.line);
+    }
+  }
+
+  yield* execBloco(programa.corpo);
+}
+
+/* -------------------------------------------------------------------- UI/DRIVER */
+const $code    = document.getElementById("code");
+const $console = document.getElementById("console");
+const $gutter  = document.getElementById("gutter");
+const $run     = document.getElementById("runBtn");
+const $stop    = document.getElementById("stopBtn");
+const $clear   = document.getElementById("clearBtn");
+const $examples= document.getElementById("examples");
+
+let rodando = false;
+let cancelar = false;
+
+function atualizaGutter() {
+  const linhas = $code.value.split("\n").length;
+  let s = "";
+  for (let i = 1; i <= linhas; i++) s += i + "\n";
+  $gutter.textContent = s;
+  $gutter.scrollTop = $code.scrollTop;
+}
+$code.addEventListener("input", atualizaGutter);
+$code.addEventListener("scroll", () => { $gutter.scrollTop = $code.scrollTop; });
+// Tab digita 4 espaços dentro do editor
+$code.addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const s = $code.selectionStart, en = $code.selectionEnd;
+    $code.value = $code.value.slice(0, s) + "    " + $code.value.slice(en);
+    $code.selectionStart = $code.selectionEnd = s + 4;
+    atualizaGutter();
+  }
+});
+
+function escreveConsole(text, cls) {
+  const span = document.createElement("span");
+  span.className = "out-line" + (cls ? " " + cls : "");
+  span.textContent = text;
+  $console.appendChild(span);
+  $console.scrollTop = $console.scrollHeight;
+}
+
+function pedeEntrada(name, tipo) {
+  return new Promise((resolve) => {
+    const row = document.createElement("div");
+    row.className = "input-row";
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = "» ";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("aria-label", `Entrada para ${name}`);
+    row.appendChild(caret);
+    row.appendChild(input);
+    $console.appendChild(row);
+    $console.scrollTop = $console.scrollHeight;
+    input.focus();
+
+    const enviar = () => {
+      const val = input.value;
+      row.remove();
+      escreveConsole(`» ${val}\n`, "echo");
+      resolve(val);
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); enviar(); }
+    });
+  });
+}
+
+async function executar() {
+  if (rodando) return;
+  rodando = true; cancelar = false;
+  $run.disabled = true; $stop.disabled = false;
+  $console.innerHTML = "";
+
+  let programa;
+  try {
+    const tokens = lex($code.value);
+    programa = parse(tokens);
+  } catch (e) {
+    if (e instanceof PortugolError) {
+      escreveConsole(`Erro de sintaxe${e.line ? " (linha " + e.line + ")" : ""}: ${e.message}\n`, "err-msg");
+    } else {
+      escreveConsole("Erro inesperado: " + e.message + "\n", "err-msg");
+    }
+    encerra();
+    return;
+  }
+
+  const gen = interpretar(programa);
+  let enviar;
+  let contadorSaidas = 0;
+  try {
+    while (true) {
+      if (cancelar) { escreveConsole("\n[execução interrompida]\n", "sys-msg"); break; }
+      const { value, done } = gen.next(enviar);
+      enviar = undefined;
+      if (done) { escreveConsole("\n[fim da execução]\n", "ok-msg"); break; }
+
+      if (value.kind === "output") {
+        escreveConsole(value.text);
+        // solta a thread de vez em quando pra UI respirar em loops grandes
+        if (++contadorSaidas % 200 === 0) await new Promise(r => setTimeout(r, 0));
+      } else if (value.kind === "input") {
+        enviar = await pedeEntrada(value.name, value.tipo);
+        if (cancelar) { escreveConsole("\n[execução interrompida]\n", "sys-msg"); break; }
+      }
+    }
+  } catch (e) {
+    if (e instanceof PortugolError) {
+      escreveConsole(`\nErro em execução${e.line ? " (linha " + e.line + ")" : ""}: ${e.message}\n`, "err-msg");
+    } else {
+      escreveConsole("\nErro inesperado: " + e.message + "\n", "err-msg");
+    }
+  }
+  encerra();
+}
+
+function encerra() {
+  rodando = false;
+  $run.disabled = false;
+  $stop.disabled = true;
+}
+
+$run.addEventListener("click", executar);
+$stop.addEventListener("click", () => { cancelar = true; });
+$clear.addEventListener("click", () => { $console.innerHTML = ""; });
+
+/* ------------------------------------------------------------------ EXEMPLOS */
+const EXEMPLOS = {
+  "Olá / leitura": `Algoritmo Saudacao
+
+DECLARE
+    nome : literal;
+    idade : inteiro;
+
+Inicio
+    escreva("Qual é o seu nome?");
+    leia(nome);
+    escreva("Quantos anos você tem?");
+    leia(idade);
+
+    escreva("Olá, ", nome, "!");
+    se (idade >= 18) entao
+        escreva("Você é maior de idade.");
+    senao
+        escreva("Você é menor de idade.");
+    fim se;
+Fim Algoritmo.`,
+
+  "Média de 2 notas": `Algoritmo Media
+
+DECLARE
+    n1, n2 : real;
+    media : real;
+
+Inicio
+    escreva("Digite a primeira nota:");
+    leia(n1);
+    escreva("Digite a segunda nota:");
+    leia(n2);
+
+    media <- (n1 + n2) / 2;
+    escreva("Média = ", media);
+
+    se (media >= 6) entao
+        escreva("Aprovado!");
+    senao
+        escreva("Reprovado.");
+    fim se;
+Fim Algoritmo.`,
+
+  "Tabuada (para)": `Algoritmo Tabuada
+
+DECLARE
+    n, i, resultado : inteiro;
+
+Inicio
+    escreva("Digite um número:");
+    leia(n);
+
+    para i <- 1 ate 10 faca
+        resultado <- n * i;
+        escreva(n, " x ", i, " = ", resultado);
+    Fim para;
+Fim Algoritmo.`,
+
+  "Soma até parar (enquanto)": `Algoritmo Soma
+
+DECLARE
+    valor, soma : inteiro;
+
+Inicio
+    soma <- 0;
+    valor <- 1;
+
+    enquanto (valor <> 0) faca
+        escreva("Digite um número (0 para parar):");
+        leia(valor);
+        soma <- soma + valor;
+    Fim enquanto;
+
+    escreva("Soma total = ", soma);
+Fim Algoritmo.`,
+};
+
+for (const nome of Object.keys(EXEMPLOS)) {
+  const opt = document.createElement("option");
+  opt.value = nome; opt.textContent = nome;
+  $examples.appendChild(opt);
+}
+$examples.addEventListener("change", () => {
+  if (EXEMPLOS[$examples.value]) {
+    $code.value = EXEMPLOS[$examples.value];
+    atualizaGutter();
+    $examples.value = "";
+  }
+});
+
+// carrega o primeiro exemplo ao abrir
+$code.value = EXEMPLOS["Olá / leitura"];
+atualizaGutter();
+</script>
+</body>
+</html>
