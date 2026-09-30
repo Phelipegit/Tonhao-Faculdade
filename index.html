@@ -221,7 +221,7 @@ class PortugolError extends Error {
 const KEYWORDS = new Set([
   "algoritmo","declare","inicio","fim","se","entao","senao",
   "enquanto","faca","para","ate","passo","leia","escreva","escreval",
-  "e","ou","nao","mod","verdadeiro","falso",
+  "e","ou","nao","mod","verdadeiro","falso","vetor","de",
   "inteiro","real","logico","caractere","cadeia","literal"
 ]);
 const TYPES = new Set(["inteiro","real","logico","caractere","cadeia","literal"]);
@@ -312,6 +312,7 @@ function lex(src) {
 
     // operadores e pontuacao (2 chars primeiro)
     const two = src.substr(i, 2);
+    if (two === "..") { push("range", ".."); i += 2; continue; }
     if (two === "<-") { push("op", "<-"); i += 2; continue; }
     if (two === "<>") { push("op", "<>"); i += 2; continue; }
     if (two === "!=") { push("op", "<>"); i += 2; continue; }
@@ -327,6 +328,8 @@ function lex(src) {
     if (c === "!") { push("op", "nao"); i++; continue; }
     if (c === "(") { push("lparen", "("); i++; continue; }
     if (c === ")") { push("rparen", ")"); i++; continue; }
+    if (c === "[") { push("lbracket", "["); i++; continue; }
+    if (c === "]") { push("rbracket", "]"); i++; continue; }
     if (c === ",") { push("comma", ","); i++; continue; }
     if (c === ";") { push("semi", ";"); i++; continue; }
     if (c === ":") { push("colon", ":"); i++; continue; }
@@ -379,9 +382,7 @@ function parse(tokens) {
         const names = [ next().value ];
         while (peek().type === "comma") { next(); names.push(expect("id","um nome de variável").value); }
         expect("colon", "':' (para indicar o tipo)");
-        if (!(peek().type === "kw" && TYPES.has(peek().value)))
-          err("Esperava um tipo (inteiro, real, logico, caractere, cadeia ou literal).");
-        const tipo = next().value;
+        const tipo = parseTipo();
         expect("semi", "';' ao final da declaração");
         for (const nm of names) decls.push({ name: nm.key, raw: nm.raw, tipo });
       }
@@ -395,6 +396,34 @@ function parse(tokens) {
     if (peek().type === "dot" || peek().type === "semi") next();
 
     return { nome, decls, corpo };
+  }
+
+  // ---- tipo: escalar (inteiro, real, ...) ou vetor[lo..hi; ...] de <base>
+  function parseTipoEscalar() {
+    if (!(peek().type === "kw" && TYPES.has(peek().value)))
+      err("Esperava um tipo (inteiro, real, logico, caractere, cadeia ou literal).");
+    return next().value;
+  }
+  function parseTipo() {
+    if (!isKw("vetor")) return parseTipoEscalar();
+    next(); // vetor
+    expect("lbracket", "'[' para as dimensões do vetor");
+    const dims = [];
+    do {
+      const lo = parseExpr();
+      expect("range", "'..' entre o menor e o maior índice (ex: 1..5)");
+      const hi = parseExpr();
+      dims.push({ lo, hi });
+    } while (aceitaSepDim());
+    expect("rbracket", "']' ao final das dimensões do vetor");
+    expectKw("de");
+    const base = parseTipoEscalar();
+    return { array: true, dims, base };
+  }
+  // separadores de dimensão/índice: aceita ';' ou ','
+  function aceitaSepDim() {
+    if (peek().type === "semi" || peek().type === "comma") { next(); return true; }
+    return false;
   }
 
   // ---- bloco: sequência de comandos até 'fim' ou 'senao'
@@ -423,22 +452,39 @@ function parse(tokens) {
     err(`Comando inválido começando em "${tokenText(t)}".`);
   }
 
-  function parseAtribuicao() {
-    const alvo = next().value;         // id
+  // lê os índices de um vetor:  [ e1 (; ou ,) e2 ... ]
+  function parseIndices() {
+    expect("lbracket", "'[' para o índice do vetor");
+    const idx = [ parseExpr() ];
+    while (aceitaSepDim()) idx.push(parseExpr());
+    expect("rbracket", "']' depois do índice do vetor");
+    return idx;
+  }
+  // lê um destino de atribuição/leitura: nome  ou  nome[i]  ou  nome[i;j]
+  function parseLValue() {
+    const alvo = expect("id", "uma variável").value;
     const line = tokens[p-1].line;
+    const indices = (peek().type === "lbracket") ? parseIndices() : null;
+    return { name: alvo.key, raw: alvo.raw, indices, line };
+  }
+
+  function parseAtribuicao() {
+    const alvo = parseLValue();
     if (!isOp("<-")) err(`Esperava '<-' para atribuir um valor a "${alvo.raw}".`);
     next();
     const expr = parseExpr();
     expect("semi", "';' ao final do comando");
-    return { type: "assign", name: alvo.key, raw: alvo.raw, expr, line };
+    if (alvo.indices)
+      return { type: "assignIndex", name: alvo.name, raw: alvo.raw, indices: alvo.indices, expr, line: alvo.line };
+    return { type: "assign", name: alvo.name, raw: alvo.raw, expr, line: alvo.line };
   }
 
   function parseLeia() {
     const line = peek().line;
     next();
     expect("lparen", "'(' depois de leia");
-    const alvos = [ expect("id","uma variável para ler").value ];
-    while (peek().type === "comma") { next(); alvos.push(expect("id","uma variável").value); }
+    const alvos = [ parseLValue() ];
+    while (peek().type === "comma") { next(); alvos.push(parseLValue()); }
     expect("rparen", "')'");
     expect("semi", "';'");
     return { type: "leia", alvos, line };
@@ -560,7 +606,14 @@ function parse(tokens) {
     if (t.type === "str") { next(); return { type:"str", value: t.value, line: t.line }; }
     if (t.type === "kw" && t.value === "verdadeiro") { next(); return { type:"bool", value: true, line: t.line }; }
     if (t.type === "kw" && t.value === "falso") { next(); return { type:"bool", value: false, line: t.line }; }
-    if (t.type === "id") { next(); return { type:"var", name: t.value.key, raw: t.value.raw, line: t.line }; }
+    if (t.type === "id") {
+      next();
+      if (peek().type === "lbracket") {
+        const indices = parseIndices();
+        return { type:"index", name: t.value.key, raw: t.value.raw, indices, line: t.line };
+      }
+      return { type:"var", name: t.value.key, raw: t.value.raw, line: t.line };
+    }
     if (t.type === "lparen") { next(); const e = parseExpr(); expect("rparen", "')'"); return e; }
     err(`Esperava um valor ou expressão, mas encontrei "${tokenText(t)}".`);
   }
@@ -602,8 +655,44 @@ function* interpretar(programa) {
   for (const d of programa.decls) {
     if (tipos[d.name] !== undefined)
       throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, undefined);
-    tipos[d.name] = d.tipo;
-    vars[d.name] = tipoPadrao(d.tipo);
+    if (d.tipo && d.tipo.array) {
+      const info = montaVetor(d.tipo, d.raw);
+      tipos[d.name] = info;
+      vars[d.name] = new Array(info.total).fill(tipoPadrao(info.base));
+    } else {
+      tipos[d.name] = d.tipo;
+      vars[d.name] = tipoPadrao(d.tipo);
+    }
+  }
+
+  // avalia os limites do vetor (constantes) e pré-calcula tamanhos
+  function montaVetor(tipo, raw) {
+    const dims = tipo.dims.map(dm => {
+      const lo = avalia(dm.lo), hi = avalia(dm.hi);
+      if (!Number.isInteger(lo) || !Number.isInteger(hi))
+        throw new PortugolError(`Os limites do vetor "${raw}" devem ser inteiros.`, undefined);
+      if (hi < lo)
+        throw new PortugolError(`No vetor "${raw}" o índice final (${hi}) é menor que o inicial (${lo}).`, undefined);
+      return { lo, hi, size: hi - lo + 1 };
+    });
+    const total = dims.reduce((acc, dm) => acc * dm.size, 1);
+    return { array: true, base: tipo.base, dims, total };
+  }
+
+  // calcula a posição linear a partir dos índices (row-major), checando limites
+  function calculaOffset(info, idxs, raw, line) {
+    if (idxs.length !== info.dims.length)
+      throw new PortugolError(`"${raw}" tem ${info.dims.length} dimensão(ões), mas usei ${idxs.length} índice(s).`, line);
+    let off = 0;
+    for (let k = 0; k < idxs.length; k++) {
+      const i = idxs[k], dm = info.dims[k];
+      if (!Number.isInteger(i))
+        throw new PortugolError(`O índice de "${raw}" precisa ser um número inteiro.`, line);
+      if (i < dm.lo || i > dm.hi)
+        throw new PortugolError(`Índice ${i} fora dos limites de "${raw}" (${dm.lo}..${dm.hi}).`, line);
+      off = off * dm.size + (i - dm.lo);
+    }
+    return off;
   }
 
   function exigeDeclarada(name, raw, line) {
@@ -611,24 +700,31 @@ function* interpretar(programa) {
       throw new PortugolError(`Variável "${raw}" não foi declarada no DECLARE.`, line);
   }
 
-  function coage(name, valor, line) {
-    const tipo = tipos[name];
+  // coage um valor para um tipo escalar (inteiro, real, logico, caractere, ...)
+  function coageEscalar(tipo, valor, line, nome) {
     if (ehNumerico(tipo)) {
       if (typeof valor !== "number")
-        throw new PortugolError(`Não dá pra guardar esse valor em "${name}" (${tipo}).`, line);
+        throw new PortugolError(`Não dá pra guardar esse valor em "${nome}" (${tipo}).`, line);
       if (tipo === "inteiro" && !Number.isInteger(valor))
-        throw new PortugolError(`"${name}" é inteiro, mas o valor ${valor} tem casas decimais.`, line);
+        throw new PortugolError(`"${nome}" é inteiro, mas o valor ${valor} tem casas decimais.`, line);
       return valor;
     }
     if (tipo === "logico") {
       if (typeof valor !== "boolean")
-        throw new PortugolError(`"${name}" é logico e só aceita verdadeiro/falso.`, line);
+        throw new PortugolError(`"${nome}" é logico e só aceita verdadeiro/falso.`, line);
       return valor;
     }
     // caractere / cadeia / literal
     let s = formataValor(valor);
     if (tipo === "caractere" && s.length > 1) s = s.slice(0, 1);
     return s;
+  }
+
+  function coage(name, valor, line) {
+    const tipo = tipos[name];
+    if (tipo && tipo.array)
+      throw new PortugolError(`"${name}" é um vetor; use um índice, ex: ${name}[1].`, line);
+    return coageEscalar(tipo, valor, line, name);
   }
 
   function avalia(node) {
@@ -638,7 +734,18 @@ function* interpretar(programa) {
       case "bool": return node.value;
       case "var":
         exigeDeclarada(node.name, node.raw, node.line);
+        if (tipos[node.name] && tipos[node.name].array)
+          throw new PortugolError(`"${node.raw}" é um vetor; use um índice, ex: ${node.raw}[1].`, node.line);
         return vars[node.name];
+      case "index": {
+        exigeDeclarada(node.name, node.raw, node.line);
+        const info = tipos[node.name];
+        if (!(info && info.array))
+          throw new PortugolError(`"${node.raw}" não é um vetor, então não aceita índice.`, node.line);
+        const idxs = node.indices.map(e => avalia(e));
+        const off = calculaOffset(info, idxs, node.raw, node.line);
+        return vars[node.name][off];
+      }
       case "un": {
         const v = avalia(node.expr);
         if (node.op === "-") return -numero(v, node.line);
@@ -737,11 +844,31 @@ function* interpretar(programa) {
         vars[s.name] = coage(s.name, avalia(s.expr), s.line);
         break;
       }
+      case "assignIndex": {
+        exigeDeclarada(s.name, s.raw, s.line);
+        const info = tipos[s.name];
+        if (!(info && info.array))
+          throw new PortugolError(`"${s.raw}" não é um vetor, então não aceita índice.`, s.line);
+        const idxs = s.indices.map(e => avalia(e));
+        const off = calculaOffset(info, idxs, s.raw, s.line);
+        vars[s.name][off] = coageEscalar(info.base, avalia(s.expr), s.line, s.raw);
+        break;
+      }
       case "leia": {
         for (const alvo of s.alvos) {
-          exigeDeclarada(alvo.key, alvo.raw, s.line);
-          const txt = yield { kind: "input", name: alvo.raw, tipo: tipos[alvo.key] };
-          vars[alvo.key] = converteEntrada(txt, tipos[alvo.key], alvo.raw, s.line);
+          exigeDeclarada(alvo.name, alvo.raw, s.line);
+          const info = tipos[alvo.name];
+          if (info && info.array) {
+            const idxs = (alvo.indices || []).map(e => avalia(e));
+            const off = calculaOffset(info, idxs, alvo.raw, s.line);
+            const txt = yield { kind: "input", name: alvo.raw, tipo: info.base };
+            vars[alvo.name][off] = converteEntrada(txt, info.base, alvo.raw, s.line);
+          } else {
+            if (alvo.indices)
+              throw new PortugolError(`"${alvo.raw}" não é um vetor, então não aceita índice.`, s.line);
+            const txt = yield { kind: "input", name: alvo.raw, tipo: info };
+            vars[alvo.name] = converteEntrada(txt, info, alvo.raw, s.line);
+          }
         }
         break;
       }
@@ -985,6 +1112,51 @@ Inicio
     Fim enquanto;
 
     escreva("Soma total = ", soma);
+Fim Algoritmo.`,
+
+  "Vetor (5 notas)": `Algoritmo Vetor
+
+DECLARE
+    notas : vetor[1..5] de real;
+    i : inteiro;
+    soma, media : real;
+
+Inicio
+    soma <- 0;
+    para i <- 1 ate 5 faca
+        escreva("Digite a nota ", i, ":");
+        leia(notas[i]);
+        soma <- soma + notas[i];
+    Fim para;
+
+    media <- soma / 5;
+    escreva("Média da turma = ", media);
+
+    escreva("Notas digitadas:");
+    para i <- 1 ate 5 faca
+        escreva("  nota[", i, "] = ", notas[i]);
+    Fim para;
+Fim Algoritmo.`,
+
+  "Matriz (2x3)": `Algoritmo Matriz
+
+DECLARE
+    m : vetor[1..2;1..3] de inteiro;
+    i, j : inteiro;
+
+Inicio
+    para i <- 1 ate 2 faca
+        para j <- 1 ate 3 faca
+            m[i;j] <- i * j;
+        Fim para;
+    Fim para;
+
+    escreva("Conteúdo da matriz:");
+    para i <- 1 ate 2 faca
+        para j <- 1 ate 3 faca
+            escreva("m[", i, ";", j, "] = ", m[i;j]);
+        Fim para;
+    Fim para;
 Fim Algoritmo.`,
 };
 
