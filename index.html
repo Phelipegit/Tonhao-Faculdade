@@ -1009,15 +1009,21 @@ function* interpretar(programa) {
       }
       case "para": {
         exigeDeclarada(s.varName, s.raw, s.line);
-        let atual = numero(avalia(s.inicio), s.line);
+        const inicio = numero(avalia(s.inicio), s.line);
         const limite = numero(avalia(s.fim), s.line);
-        const passo = s.passo ? numero(avalia(s.passo), s.line) : 1;
-        if (passo === 0) throw new PortugolError("O 'passo' não pode ser zero.", s.line);
-        vars[s.varName] = coage(s.varName, atual, s.line);
-        while (passo > 0 ? vars[s.varName] <= limite : vars[s.varName] >= limite) {
+        // 'passo' é OPCIONAL: só há incremento automático quando ele é escrito.
+        // Sem 'passo', quem avança a variável de controle é o próprio corpo
+        // (ex: i <- i + 1); não incrementar => laço roda até o limite de passos.
+        const temPasso = s.passo != null;
+        const passo = temPasso ? numero(avalia(s.passo), s.line) : 0;
+        if (temPasso && passo === 0) throw new PortugolError("O 'passo' não pode ser zero.", s.line);
+        // direção da condição de parada: pelo sinal do passo, ou (sem passo) por inicio/limite
+        const subindo = temPasso ? (passo > 0) : (inicio <= limite);
+        vars[s.varName] = coage(s.varName, inicio, s.line);
+        while (subindo ? vars[s.varName] <= limite : vars[s.varName] >= limite) {
           if (++passos > MAX_PASSOS) throw new PortugolError("Execução interrompida: possível laço infinito.", s.line);
           yield* execBloco(s.corpo);
-          vars[s.varName] = coage(s.varName, vars[s.varName] + passo, s.line);
+          if (temPasso) vars[s.varName] = coage(s.varName, vars[s.varName] + passo, s.line);
         }
         break;
       }
@@ -1218,7 +1224,7 @@ Inicio
     escreva("Digite um número:");
     leia(n);
 
-    para i <- 1 ate 10 faca
+    para i <- 1 ate 10 passo 1 faca
         resultado <- n * i;
         escreva(n, " x ", i, " = ", resultado);
     Fim para;
@@ -1251,7 +1257,7 @@ DECLARE
 
 Inicio
     soma <- 0;
-    para i <- 1 ate 5 faca
+    para i <- 1 ate 5 passo 1 faca
         escreva("Digite a nota ", i, ":");
         leia(notas[i]);
         soma <- soma + notas[i];
@@ -1261,7 +1267,7 @@ Inicio
     escreva("Média da turma = ", media);
 
     escreva("Notas digitadas:");
-    para i <- 1 ate 5 faca
+    para i <- 1 ate 5 passo 1 faca
         escreva("  nota[", i, "] = ", notas[i]);
     Fim para;
 Fim Algoritmo.`,
@@ -1273,15 +1279,15 @@ DECLARE
     i, j : inteiro;
 
 Inicio
-    para i <- 1 ate 2 faca
-        para j <- 1 ate 3 faca
+    para i <- 1 ate 2 passo 1 faca
+        para j <- 1 ate 3 passo 1 faca
             m[i;j] <- i * j;
         Fim para;
     Fim para;
 
     escreva("Conteúdo da matriz:");
-    para i <- 1 ate 2 faca
-        para j <- 1 ate 3 faca
+    para i <- 1 ate 2 passo 1 faca
+        para j <- 1 ate 3 passo 1 faca
             escreva("m[", i, ";", j, "] = ", m[i;j]);
         Fim para;
     Fim para;
@@ -1299,7 +1305,7 @@ DECLARE
     i : inteiro;
 
 Inicio
-    para i <- 1 ate 3 faca
+    para i <- 1 ate 3 passo 1 faca
         escreva("Nome da pessoa ", i, ":");
         leia(turma[i].nome);
         escreva("Idade de ", turma[i].nome, ":");
@@ -1307,7 +1313,7 @@ Inicio
     Fim para;
 
     escreva("--- Cadastro ---");
-    para i <- 1 ate 3 faca
+    para i <- 1 ate 3 passo 1 faca
         escreva(turma[i].nome, " tem ", turma[i].idade, " anos");
     Fim para;
 Fim Algoritmo.`,
