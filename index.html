@@ -222,6 +222,7 @@ const KEYWORDS = new Set([
   "algoritmo","declare","inicio","fim","se","entao","senao",
   "enquanto","faca","para","ate","passo","leia","escreva","escreval",
   "e","ou","nao","mod","verdadeiro","falso","vetor","de","tipo","registro",
+  "procedimento","var",
   "inteiro","real","logico","caractere","cadeia","literal"
 ]);
 const TYPES = new Set(["inteiro","real","logico","caractere","cadeia","literal"]);
@@ -384,20 +385,13 @@ function parse(tokens) {
     const nome = leNome("nome do algoritmo").raw;
     if (peek().type === "semi") next();   // ';' opcional depois do nome do algoritmo
 
-    // definições de registro (Tipo ... registro ... Fim registro;) vêm ANTES do DECLARE
-    while (isKw("tipo")) parseRegistroDef();
-
+    // seções Tipo / Declare / Procedimento podem vir em qualquer ordem antes do Inicio
     const decls = [];
-    if (isKw("declare")) {
-      next();
-      while (!isKw("inicio") && !atEnd()) {
-        const names = [ leNome("um nome de variável") ];
-        while (peek().type === "comma") { next(); names.push(leNome("um nome de variável")); }
-        expect("colon", "':' (para indicar o tipo)");
-        const tipo = parseTipo();
-        expect("semi", "';' ao final da declaração");
-        for (const nm of names) decls.push({ name: nm.key, raw: nm.raw, tipo });
-      }
+    const procedimentos = Object.create(null);
+    while (isKw("tipo") || isKw("declare") || isKw("procedimento")) {
+      if (isKw("tipo")) parseRegistroDef();
+      else if (isKw("declare")) { next(); parseDeclsInto(decls); }
+      else parseProcedimento(procedimentos);
     }
 
     expectKw("inicio");
@@ -407,7 +401,82 @@ function parse(tokens) {
     // aceita ".", ";" ou fim do arquivo apos "Fim Algoritmo"
     if (peek().type === "dot" || peek().type === "semi") next();
 
-    return { nome, registros, decls, corpo };
+    return { nome, registros, procedimentos, decls, corpo };
+  }
+
+  // lê linhas de declaração (depois do 'Declare' já consumido), até acabar o bloco
+  function parseDeclsInto(decls) {
+    const pareceDecl = () =>
+      peek().type === "id" ||
+      (peek().type === "kw" && tokens[p+1] &&
+       (tokens[p+1].type === "colon" || tokens[p+1].type === "comma"));
+    while (pareceDecl()) {
+      const names = [ leNome("um nome de variável") ];
+      while (peek().type === "comma") { next(); names.push(leNome("um nome de variável")); }
+      expect("colon", "':' (para indicar o tipo)");
+      const tipo = parseTipo();
+      expect("semi", "';' ao final da declaração");
+      for (const nm of names) decls.push({ name: nm.key, raw: nm.raw, tipo });
+    }
+  }
+
+  // ---- procedimento: Procedimento nome [(params)] [Declare ...] Inicio ... Fim procedimento;
+  function parseProcedimento(procs) {
+    expectKw("procedimento");
+    const nomeTok = leNome("nome do procedimento");
+    if (procs[nomeTok.key])
+      err(`Procedimento "${nomeTok.raw}" definido mais de uma vez.`);
+    const params = [];
+    if (peek().type === "lparen") {
+      next();
+      if (peek().type !== "rparen") {
+        parseParamGroup(params);
+        while (peek().type === "semi" || peek().type === "comma") {
+          next();
+          if (peek().type === "rparen") break;
+          parseParamGroup(params);
+        }
+      }
+      expect("rparen", "')' ao final dos parâmetros");
+    }
+    const pdecls = [];
+    if (isKw("declare")) { next(); parseDeclsInto(pdecls); }
+    expectKw("inicio");
+    const corpo = parseBloco();
+    expectKw("fim");
+    expectKw("procedimento");
+    if (peek().type === "semi" || peek().type === "dot") next();   // ';' depois de 'Fim procedimento'
+    procs[nomeTok.key] = { raw: nomeTok.raw, params, decls: pdecls, corpo };
+  }
+
+  // grupo de parâmetros:  [var] nome[, nome...] : <tipo escalar ou registro>
+  function parseParamGroup(params) {
+    let porRef = false;
+    if (isKw("var")) { next(); porRef = true; }
+    const names = [ leNome("um nome de parâmetro") ];
+    while (peek().type === "comma") { next(); names.push(leNome("um nome de parâmetro")); }
+    expect("colon", "':' para o tipo do parâmetro");
+    if (isKw("vetor"))
+      err("Parâmetro do tipo vetor ainda não é suportado; use uma variável global para passar vetores.");
+    const tipo = parseBase();   // escalar ou registro
+    for (const nm of names) params.push({ name: nm.key, raw: nm.raw, tipo, porRef });
+  }
+
+  // chamada de procedimento como comando:  nome;  ou  nome(arg, arg, ...);
+  function parseChamada() {
+    const nomeTok = expect("id", "o nome de um procedimento").value;
+    const line = tokens[p-1].line;
+    const args = [];
+    if (peek().type === "lparen") {
+      next();
+      if (peek().type !== "rparen") {
+        args.push(parseExpr());
+        while (peek().type === "comma") { next(); args.push(parseExpr()); }
+      }
+      expect("rparen", "')' ao final dos argumentos");
+    }
+    expect("semi", "';' ao final da chamada");
+    return { type: "chamada", name: nomeTok.key, raw: nomeTok.raw, args, line };
   }
 
   // ---- definição de registro:  Tipo Nome : registro  campo:tipo; ...  Fim registro;
@@ -499,7 +568,12 @@ function parse(tokens) {
         default: err(`Comando inesperado: "${t.value}".`);
       }
     }
-    if (t.type === "id") return parseAtribuicao();
+    if (t.type === "id") {
+      // chamada de procedimento: id seguido de '(' ou ';'  (senão é atribuição)
+      const nx = tokens[p+1];
+      if (nx && (nx.type === "lparen" || nx.type === "semi")) return parseChamada();
+      return parseAtribuicao();
+    }
     err(`Comando inválido começando em "${tokenText(t)}".`);
   }
 
@@ -714,22 +788,41 @@ function* interpretar(programa) {
   let passos = 0;
 
   const registros = programa.registros || Object.create(null);
-  const vars = Object.create(null);   // valor atual
-  const tipos = Object.create(null);  // tipo declarado
-  for (const d of programa.decls) {
-    if (tipos[d.name] !== undefined)
-      throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, undefined);
-    if (d.tipo && d.tipo.array) {
-      const info = montaVetor(d.tipo, d.raw);
-      tipos[d.name] = info;
-      const arr = new Array(info.total);
-      for (let k = 0; k < info.total; k++) arr[k] = valorPadrao(info.base);
-      vars[d.name] = arr;
-    } else {
-      tipos[d.name] = d.tipo;
-      vars[d.name] = valorPadrao(d.tipo);
+  const procedimentos = programa.procedimentos || Object.create(null);
+
+  // --- escopos: global + escopo do procedimento em execução ---
+  function criaEscopo(pai) {
+    return { tipos: Object.create(null), store: Object.create(null), refs: Object.create(null), pai };
+  }
+  const global = criaEscopo(null);
+  let escopo = global;
+
+  // acha o escopo que declara 'name' (escopo atual; senão o global)
+  function achaEscopo(name) {
+    if (name in escopo.tipos) return escopo;
+    if (escopo !== global && name in global.tipos) return global;
+    return null;
+  }
+
+  // inicializa as variáveis de um conjunto de declarações num escopo
+  function inicializaDecls(decls, esc) {
+    for (const d of decls) {
+      if (esc.tipos[d.name] !== undefined)
+        throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, undefined);
+      if (d.tipo && d.tipo.array) {
+        const info = montaVetor(d.tipo, d.raw);
+        esc.tipos[d.name] = info;
+        const arr = new Array(info.total);
+        for (let k = 0; k < info.total; k++) arr[k] = valorPadrao(info.base);
+        esc.store[d.name] = arr;
+      } else {
+        esc.tipos[d.name] = d.tipo;
+        esc.store[d.name] = valorPadrao(d.tipo);
+      }
     }
   }
+
+  inicializaDecls(programa.decls, global);
 
   // valor inicial de um tipo base: escalar (string) ou registro ({record})
   function valorPadrao(base) {
@@ -778,11 +871,6 @@ function* interpretar(programa) {
     return off;
   }
 
-  function exigeDeclarada(name, raw, line) {
-    if (tipos[name] === undefined)
-      throw new PortugolError(`Variável "${raw}" não foi declarada no DECLARE.`, line);
-  }
-
   // coage um valor para um tipo escalar (inteiro, real, logico, caractere, ...)
   function coageEscalar(tipo, valor, line, nome) {
     if (ehNumerico(tipo)) {
@@ -803,51 +891,59 @@ function* interpretar(programa) {
     return s;
   }
 
-  // coage para o tipo de uma variável escalar simples (usado no laço 'para')
-  function coage(name, valor, line) {
-    const tipo = tipos[name];
-    if (tipo && tipo.array)
-      throw new PortugolError(`"${name}" é um vetor; use um índice, ex: ${name}[1].`, line);
-    if (tipo && tipo.record)
-      throw new PortugolError(`"${name}" é um registro; use um campo, ex: ${name}.campo.`, line);
-    return coageEscalar(tipo, valor, line, name);
-  }
-
-  // resolve um destino (nome | nome[i] | nome.campo | nome[i].campo)
-  // devolve { container, key, tipoEsc, rotulo } — sempre apontando pra uma célula escalar
-  function localAlvo(alvo, line) {
-    exigeDeclarada(alvo.name, alvo.raw, line);
-    const info = tipos[alvo.name];
+  // resolve um destino (nome | nome[i] | nome.campo | nome[i].campo) para uma
+  // referência { container, key, info, rotulo }. 'info' pode ser escalar, {array} ou {record}.
+  // Respeita o escopo atual (locais + globais) e os parâmetros por referência (refs).
+  function resolveRef(alvo, line) {
+    const esc = achaEscopo(alvo.name);
+    if (!esc)
+      throw new PortugolError(`Variável "${alvo.raw}" não foi declarada.`, line);
+    const info = esc.tipos[alvo.name];
+    let cont, key;
+    if (alvo.name in esc.refs) { const r = esc.refs[alvo.name]; cont = r.container; key = r.key; }
+    else { cont = esc.store; key = alvo.name; }
 
     if (alvo.indices) {
       if (!(info && info.array))
         throw new PortugolError(`"${alvo.raw}" não é um vetor, então não aceita índice.`, line);
       const idxs = alvo.indices.map(e => avalia(e));
       const off = calculaOffset(info, idxs, alvo.raw, line);
+      const arr = cont[key];
       if (alvo.field) {
         if (!(info.base && info.base.record))
           throw new PortugolError(`"${alvo.raw}" não é um vetor de registro; não tem campos.`, line);
-        const rec = vars[alvo.name][off];
+        const rec = arr[off];
         const f = campoDe(info.base.record, alvo.field, alvo.fieldRaw, line);
-        return { container: rec, key: alvo.field, tipoEsc: f.tipo, rotulo: `${alvo.raw}[..].${alvo.fieldRaw}` };
+        return { container: rec, key: alvo.field, info: f.tipo, rotulo: `${alvo.raw}[..].${alvo.fieldRaw}` };
       }
-      if (info.base && info.base.record)
-        throw new PortugolError(`"${alvo.raw}[..]" é um registro; use um campo, ex: ${alvo.raw}[..].campo.`, line);
-      return { container: vars[alvo.name], key: off, tipoEsc: info.base, rotulo: alvo.raw };
+      return { container: arr, key: off, info: info.base, rotulo: `${alvo.raw}[..]` };
     }
 
     if (alvo.field) {
       if (!(info && info.record))
         throw new PortugolError(`"${alvo.raw}" não é um registro; não tem campos.`, line);
+      const rec = cont[key];
       const f = campoDe(info.record, alvo.field, alvo.fieldRaw, line);
-      return { container: vars[alvo.name], key: alvo.field, tipoEsc: f.tipo, rotulo: `${alvo.raw}.${alvo.fieldRaw}` };
+      return { container: rec, key: alvo.field, info: f.tipo, rotulo: `${alvo.raw}.${alvo.fieldRaw}` };
     }
 
-    if (info && info.array)
-      throw new PortugolError(`"${alvo.raw}" é um vetor; use um índice, ex: ${alvo.raw}[1].`, line);
-    if (info && info.record)
-      throw new PortugolError(`"${alvo.raw}" é um registro; use um campo, ex: ${alvo.raw}.campo.`, line);
-    return { container: vars, key: alvo.name, tipoEsc: info, rotulo: alvo.raw };
+    return { container: cont, key, info, rotulo: alvo.raw };
+  }
+
+  // como resolveRef, mas exige uma CÉLULA ESCALAR (para store, leia e o laço 'para')
+  function localAlvo(alvo, line) {
+    const r = resolveRef(alvo, line);
+    if (r.info && r.info.array)
+      throw new PortugolError(`"${r.rotulo}" é um vetor; use um índice, ex: ${r.rotulo}[1].`, line);
+    if (r.info && r.info.record)
+      throw new PortugolError(`"${r.rotulo}" é um registro; use um campo, ex: ${r.rotulo}.campo.`, line);
+    return { container: r.container, key: r.key, tipoEsc: r.info, rotulo: r.rotulo };
+  }
+
+  // lê o valor escalar de um alvo
+  function leRef(alvo, line) {
+    const r = localAlvo(alvo, line);
+    return r.container[r.key];
   }
 
   function avalia(node) {
@@ -855,35 +951,16 @@ function* interpretar(programa) {
       case "num": return node.value;
       case "str": return node.value;
       case "bool": return node.value;
-      case "var": {
-        exigeDeclarada(node.name, node.raw, node.line);
-        const info = tipos[node.name];
-        if (info && info.array)
-          throw new PortugolError(`"${node.raw}" é um vetor; use um índice, ex: ${node.raw}[1].`, node.line);
-        if (info && info.record)
-          throw new PortugolError(`"${node.raw}" é um registro; use um campo, ex: ${node.raw}.campo.`, node.line);
-        return vars[node.name];
-      }
-      case "index": {
-        exigeDeclarada(node.name, node.raw, node.line);
-        const info = tipos[node.name];
-        if (!(info && info.array))
-          throw new PortugolError(`"${node.raw}" não é um vetor, então não aceita índice.`, node.line);
-        const idxs = node.indices.map(e => avalia(e));
-        const off = calculaOffset(info, idxs, node.raw, node.line);
-        if (info.base && info.base.record)
-          throw new PortugolError(`"${node.raw}[..]" é um registro; use um campo, ex: ${node.raw}[..].campo.`, node.line);
-        return vars[node.name][off];
-      }
-      case "field": {
-        const alvo = {
+      case "var":
+        return leRef({ name: node.name, raw: node.raw, indices: null, field: null }, node.line);
+      case "index":
+        return leRef({ name: node.name, raw: node.raw, indices: node.indices, field: null }, node.line);
+      case "field":
+        return leRef({
           name: node.base.name, raw: node.base.raw,
           indices: node.base.indices || null,
           field: node.field, fieldRaw: node.fieldRaw
-        };
-        const ref = localAlvo(alvo, node.line);
-        return ref.container[ref.key];
-      }
+        }, node.line);
       case "un": {
         const v = avalia(node.expr);
         if (node.op === "-") return -numero(v, node.line);
@@ -1008,7 +1085,7 @@ function* interpretar(programa) {
         break;
       }
       case "para": {
-        exigeDeclarada(s.varName, s.raw, s.line);
+        const refc = localAlvo({ name: s.varName, raw: s.raw, indices: null, field: null }, s.line);
         const inicio = numero(avalia(s.inicio), s.line);
         const limite = numero(avalia(s.fim), s.line);
         // 'passo' é OPCIONAL: só há incremento automático quando ele é escrito.
@@ -1019,16 +1096,99 @@ function* interpretar(programa) {
         if (temPasso && passo === 0) throw new PortugolError("O 'passo' não pode ser zero.", s.line);
         // direção da condição de parada: pelo sinal do passo, ou (sem passo) por inicio/limite
         const subindo = temPasso ? (passo > 0) : (inicio <= limite);
-        vars[s.varName] = coage(s.varName, inicio, s.line);
-        while (subindo ? vars[s.varName] <= limite : vars[s.varName] >= limite) {
+        const le = () => refc.container[refc.key];
+        refc.container[refc.key] = coageEscalar(refc.tipoEsc, inicio, s.line, refc.rotulo);
+        while (subindo ? le() <= limite : le() >= limite) {
           if (++passos > MAX_PASSOS) throw new PortugolError("Execução interrompida: possível laço infinito.", s.line);
           yield* execBloco(s.corpo);
-          if (temPasso) vars[s.varName] = coage(s.varName, vars[s.varName] + passo, s.line);
+          if (temPasso) refc.container[refc.key] = coageEscalar(refc.tipoEsc, le() + passo, s.line, refc.rotulo);
+        }
+        break;
+      }
+      case "chamada": {
+        const proc = procedimentos[s.name];
+        if (!proc)
+          throw new PortugolError(`Procedimento "${s.raw}" não foi definido.`, s.line);
+        if (s.args.length !== proc.params.length)
+          throw new PortugolError(`O procedimento "${proc.raw}" espera ${proc.params.length} argumento(s), mas recebeu ${s.args.length}.`, s.line);
+
+        const local = criaEscopo(global);
+        // vincula os parâmetros avaliando os argumentos no escopo do CHAMADOR (escopo atual)
+        for (let k = 0; k < proc.params.length; k++) {
+          const par = proc.params[k], arg = s.args[k];
+          if (par.porRef) {
+            const alvoArg = argComoAlvo(arg);
+            if (!alvoArg)
+              throw new PortugolError(`O parâmetro "${par.raw}" é por referência (var); passe uma variável, não uma expressão.`, s.line);
+            const r = resolveRef(alvoArg, s.line);
+            checaTipoParam(par, r.info, s.line);
+            local.tipos[par.name] = r.info;
+            local.refs[par.name] = { container: r.container, key: r.key };
+          } else if (par.tipo && par.tipo.record) {
+            const alvoArg = argComoAlvo(arg);
+            if (!alvoArg)
+              throw new PortugolError(`O parâmetro "${par.raw}" espera um registro, passe uma variável.`, s.line);
+            const r = resolveRef(alvoArg, s.line);
+            checaTipoParam(par, r.info, s.line);
+            local.tipos[par.name] = par.tipo;
+            local.store[par.name] = copiaValor(par.tipo, r.container[r.key]);
+          } else {
+            const valor = avalia(arg);
+            local.tipos[par.name] = par.tipo;
+            local.store[par.name] = coageEscalar(par.tipo, valor, s.line, par.raw);
+          }
+        }
+
+        const salvo = escopo;
+        escopo = local;
+        try {
+          inicializaDecls(proc.decls, local);
+          yield* execBloco(proc.corpo);
+        } finally {
+          escopo = salvo;
         }
         break;
       }
       default: throw new PortugolError(`Comando desconhecido: ${s.type}.`, s.line);
     }
+  }
+
+  // ---- helpers de procedimento ----
+  function argComoAlvo(arg) {
+    if (!arg) return null;
+    if (arg.type === "var")   return { name: arg.name, raw: arg.raw, indices: null, field: null };
+    if (arg.type === "index") return { name: arg.name, raw: arg.raw, indices: arg.indices, field: null };
+    if (arg.type === "field") return { name: arg.base.name, raw: arg.base.raw, indices: arg.base.indices || null, field: arg.field, fieldRaw: arg.fieldRaw };
+    return null;
+  }
+  function nomeTipo(t) {
+    if (t && t.record) return `registro ${registros[t.record] ? registros[t.record].raw : t.record}`;
+    if (t && t.array)  return "vetor";
+    return String(t);
+  }
+  function checaTipoParam(par, infoArg, line) {
+    const pt = par.tipo;
+    if (pt && pt.record) {
+      if (!(infoArg && infoArg.record && infoArg.record === pt.record))
+        throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(pt)}, mas o argumento é ${nomeTipo(infoArg)}.`, line);
+      return;
+    }
+    if (infoArg && (infoArg.array || infoArg.record))
+      throw new PortugolError(`O parâmetro "${par.raw}" é ${pt}, mas o argumento é ${nomeTipo(infoArg)}.`, line);
+    if (infoArg !== pt)
+      throw new PortugolError(`O parâmetro "${par.raw}" é ${pt}, mas o argumento é ${infoArg}.`, line);
+  }
+  function copiaValor(info, v) {
+    if (info && info.record) {
+      const o = Object.create(null);
+      const def = registros[info.record];
+      for (const f of def.fields) o[f.name] = v[f.name];
+      return o;
+    }
+    if (info && info.array) {
+      return v.map(el => (info.base && info.base.record) ? copiaValor(info.base, el) : el);
+    }
+    return v;
   }
 
   yield* execBloco(programa.corpo);
@@ -1316,6 +1476,31 @@ Inicio
     para i <- 1 ate 3 passo 1 faca
         escreva(turma[i].nome, " tem ", turma[i].idade, " anos");
     Fim para;
+Fim Algoritmo.`,
+
+  "Procedimento (troca)": `Algoritmo TrocaValor
+
+Declare
+    A, B : inteiro;
+
+Procedimento troca(var x : inteiro; var y : inteiro)
+Declare
+    aux : inteiro;
+Inicio
+    aux <- x;
+    x <- y;
+    y <- aux;
+Fim procedimento;
+
+Inicio
+    escreva("Digite A:");
+    leia(A);
+    escreva("Digite B:");
+    leia(B);
+
+    troca(A, B);
+
+    escreva("Depois da troca: A = ", A, ", B = ", B);
 Fim Algoritmo.`,
 };
 
