@@ -456,9 +456,7 @@ function parse(tokens) {
     const names = [ leNome("um nome de parâmetro") ];
     while (peek().type === "comma") { next(); names.push(leNome("um nome de parâmetro")); }
     expect("colon", "':' para o tipo do parâmetro");
-    if (isKw("vetor"))
-      err("Parâmetro do tipo vetor ainda não é suportado; use uma variável global para passar vetores.");
-    const tipo = parseBase();   // escalar ou registro
+    const tipo = parseTipo();   // escalar, registro ou vetor
     for (const nm of names) params.push({ name: nm.key, raw: nm.raw, tipo, porRef });
   }
 
@@ -1124,14 +1122,14 @@ function* interpretar(programa) {
             checaTipoParam(par, r.info, s.line);
             local.tipos[par.name] = r.info;
             local.refs[par.name] = { container: r.container, key: r.key };
-          } else if (par.tipo && par.tipo.record) {
+          } else if (par.tipo && (par.tipo.record || par.tipo.array)) {
             const alvoArg = argComoAlvo(arg);
             if (!alvoArg)
-              throw new PortugolError(`O parâmetro "${par.raw}" espera um registro, passe uma variável.`, s.line);
+              throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(par.tipo)}; passe uma variável.`, s.line);
             const r = resolveRef(alvoArg, s.line);
             checaTipoParam(par, r.info, s.line);
-            local.tipos[par.name] = par.tipo;
-            local.store[par.name] = copiaValor(par.tipo, r.container[r.key]);
+            local.tipos[par.name] = r.info;                        // info real (com dims, se vetor)
+            local.store[par.name] = copiaValor(r.info, r.container[r.key]);  // cópia independente
           } else {
             const valor = avalia(arg);
             local.tipos[par.name] = par.tipo;
@@ -1163,11 +1161,23 @@ function* interpretar(programa) {
   }
   function nomeTipo(t) {
     if (t && t.record) return `registro ${registros[t.record] ? registros[t.record].raw : t.record}`;
-    if (t && t.array)  return "vetor";
+    if (t && t.array)  return `vetor de ${nomeTipo(t.base)}`;
     return String(t);
+  }
+  function mesmaBase(a, b) {
+    if (a && a.record) return !!(b && b.record && a.record === b.record);
+    if (a && a.array)  return !!(b && b.array && mesmaBase(a.base, b.base));
+    return a === b;   // tipos escalares (strings)
   }
   function checaTipoParam(par, infoArg, line) {
     const pt = par.tipo;
+    if (pt && pt.array) {
+      if (!(infoArg && infoArg.array))
+        throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(pt)}, mas o argumento é ${nomeTipo(infoArg)}.`, line);
+      if (!mesmaBase(pt.base, infoArg.base))
+        throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(pt)}, mas o argumento é ${nomeTipo(infoArg)}.`, line);
+      return;
+    }
     if (pt && pt.record) {
       if (!(infoArg && infoArg.record && infoArg.record === pt.record))
         throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(pt)}, mas o argumento é ${nomeTipo(infoArg)}.`, line);
