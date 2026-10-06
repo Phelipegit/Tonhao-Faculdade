@@ -2292,6 +2292,63 @@ atualizaGutter();
   realca();
   cursor();
 
+  // ---- fecha ( [ { " ' sozinho, como nos editores de código
+  // Usa beforeinput (funciona em qualquer layout de teclado) e execCommand (mantém o Ctrl+Z).
+  const PARES = { "(": ")", "[": "]", "{": "}", '"': '"', "'": "'" };
+  const FECHAMENTOS = new Set([")", "]", "}"]);
+  const PODE_FECHAR_ANTES = /[\s)\]};,.:]/;   // só fecha sozinho se depois do cursor vier isto (ou nada)
+  let editandoPorCodigo = false;
+
+  function substitui(texto, selIni, selFim) {   // troca a seleção atual por 'texto'
+    editandoPorCodigo = true;
+    const ok = document.execCommand && document.execCommand("insertText", false, texto);
+    editandoPorCodigo = false;
+    if (!ok) {   // navegador sem execCommand: funciona, só perde o Ctrl+Z deste passo
+      code.setRangeText(texto, code.selectionStart, code.selectionEnd, "end");
+      code.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    code.setSelectionRange(selIni, selFim);
+  }
+  // está dentro de um texto? (quantidade ímpar daquela aspa antes do cursor, na linha)
+  function dentroDeTexto(v, pos, aspa) {
+    const linha = v.slice(v.lastIndexOf("\n", pos - 1) + 1, pos);
+    return linha.split(aspa).length % 2 === 0;
+  }
+
+  code.addEventListener("beforeinput", (e) => {
+    if (editandoPorCodigo || e.isComposing) return;
+    const v = code.value, ini = code.selectionStart, fim = code.selectionEnd;
+    const antes = v[ini - 1] || "", depois = v[fim] || "";
+
+    if (e.inputType === "insertText" && e.data && e.data.length === 1) {
+      const ch = e.data;
+      const aspa = ch === '"' || ch === "'";
+      // digitou o fechamento que já está logo à frente: só pula por cima
+      if (ini === fim && depois === ch && antes !== "\\" &&
+          (FECHAMENTOS.has(ch) || (aspa && dentroDeTexto(v, ini, ch)))) {
+        e.preventDefault();
+        code.setSelectionRange(ini + 1, ini + 1);
+        return;
+      }
+      if (!(ch in PARES)) return;
+      // com texto selecionado: envolve a seleção
+      if (ini !== fim) {
+        e.preventDefault();
+        substitui(ch + v.slice(ini, fim) + PARES[ch], ini + 1, fim + 1);
+        return;
+      }
+      if (depois && !PODE_FECHAR_ANTES.test(depois)) return;   // colado numa palavra: não fecha
+      if (aspa && (/[\p{L}\p{N}_\\]/u.test(antes) || dentroDeTexto(v, ini, ch))) return;   // d'água, \" ou fechando um texto
+      e.preventDefault();
+      substitui(ch + PARES[ch], ini + 1, ini + 1);
+    } else if (e.inputType === "deleteContentBackward" && ini === fim && PARES[antes] && PARES[antes] === depois) {
+      // Backspace num par vazio "(|)" apaga os dois
+      e.preventDefault();
+      code.setSelectionRange(ini - 1, ini + 1);
+      substitui("", ini - 1, ini - 1);
+    }
+  });
+
   // ---- atalho Ctrl/Cmd + Enter = Executar
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
   if (mac) document.getElementById("runKbd").textContent = "⌘ ↵";
