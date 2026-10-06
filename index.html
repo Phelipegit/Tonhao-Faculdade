@@ -197,6 +197,17 @@
     border: 1px solid color-mix(in srgb, var(--accent-ink) 14%, transparent);
   }
 
+  .btn.stop { padding: 0 6px 0 12px; }
+  .btn.stop kbd {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 5px;
+    color: var(--muted);
+    background: var(--surface-hover);
+    border: 1px solid var(--border-strong);
+  }
   .btn.stop .stop-ico {
     width: 8px; height: 8px;
     border-radius: 2px;
@@ -555,8 +566,8 @@
     .toolbar select { flex: 1 1 120px; min-width: 0; }
     .sep { display: none; }
     #themeBtn { margin-left: auto; }
-    .btn.primary kbd, .hide-sm { display: none; }
-    .btn.primary { padding: 0 12px; }
+    .btn.primary kbd, .btn.stop kbd, .hide-sm { display: none; }
+    .btn.primary, .btn.stop { padding: 0 12px; }
     .statusbar { padding: 0 18px; gap: 14px; }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -591,7 +602,7 @@
       <select id="examples" title="Exemplos">
         <option value="">Exemplos…</option>
       </select>
-      <button id="stopBtn" class="btn stop" disabled><span class="stop-ico"></span>Parar</button>
+      <button id="stopBtn" class="btn stop" disabled title="Parar (Ctrl+C)"><span class="stop-ico"></span>Parar<kbd id="stopKbd">Ctrl C</kbd></button>
       <button id="runBtn" class="btn primary">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.2-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>
         Executar
@@ -2351,7 +2362,10 @@ atualizaGutter();
 
   // ---- atalho Ctrl/Cmd + Enter = Executar
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-  if (mac) document.getElementById("runKbd").textContent = "⌘ ↵";
+  if (mac) {
+    document.getElementById("runKbd").textContent = "⌘ ↵";
+    document.getElementById("stopKbd").textContent = "⌃ C";   // no Mac, parar é Control+C mesmo
+  }
   document.addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
       e.preventDefault();
@@ -2467,6 +2481,21 @@ atualizaGutter();
     new ResizeObserver(() => { if (grudado) consoleEl.scrollTop = consoleEl.scrollHeight; }).observe(consoleEl);
 
   aplicaFoco(pct, false);
+
+  // ---- Ctrl+C = Parar, como no terminal (só enquanto executa; vale até na caixa do leia).
+  // Com texto selecionado o Ctrl+C continua copiando. No Mac copiar é Cmd+C, então Ctrl+C sempre para.
+  document.addEventListener("keydown", (e) => {
+    if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.key.toLowerCase() !== "c") return;
+    if (stopBtn.disabled) return;
+    if (!mac) {
+      const el = e.target;
+      const temSelecao = (typeof el.selectionStart === "number" && el.selectionStart !== el.selectionEnd)
+        || String(window.getSelection()) !== "";
+      if (temSelecao) return;   // deixa copiar
+    }
+    e.preventDefault();
+    stopBtn.click();
+  });
 
   // ---- tema claro/escuro
   document.getElementById("themeBtn").addEventListener("click", () => {
