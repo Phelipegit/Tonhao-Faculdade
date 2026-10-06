@@ -23,6 +23,7 @@
     --faint: #333333;
     --accent: #ffffff;
     --accent-ink: #000000;
+    --err: #f87171;   /* única cor da interface: mensagens de erro */
     --focus-ring: rgba(255, 255, 255, .18);
     --line-band: rgba(255, 255, 255, .035);
     --selection: rgba(255, 255, 255, .2);
@@ -65,6 +66,7 @@
     --faint: #d4d4d4;
     --accent: #000000;
     --accent-ink: #ffffff;
+    --err: #dc2626;
     --focus-ring: rgba(0, 0, 0, .12);
     --line-band: rgba(0, 0, 0, .035);
     --selection: rgba(0, 0, 0, .12);
@@ -494,11 +496,8 @@
   .out-line { white-space: pre-wrap; }
   .echo { color: var(--text); }
   .err-msg {
-    color: var(--text);
+    color: var(--err);
     font-weight: 500;
-    text-decoration: underline wavy var(--muted);
-    text-decoration-thickness: 1px;
-    text-underline-offset: 4px;
   }
   .ok-msg { color: var(--muted); }
   .sys-msg { color: var(--muted); font-style: italic; }
