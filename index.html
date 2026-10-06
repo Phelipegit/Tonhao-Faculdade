@@ -212,20 +212,62 @@
   .btn.sm { height: 26px; padding: 0 8px; font-size: 12px; border-radius: 6px; gap: 5px; }
   .btn.sm svg { width: 12px; height: 12px; }
 
+  /* seletor de foco: código / dividido / console + automático */
+  .sep { width: 1px; height: 22px; background: var(--border-strong); margin: 0 2px; }
+  .seg {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    height: 34px;
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    background: var(--surface);
+  }
+  .seg button {
+    min-width: 34px;
+    padding: 0 7px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 600;
+    transition: background-color .15s ease, color .15s ease;
+  }
+  .seg button:hover { color: var(--text); background: var(--surface-hover); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  .seg button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+  .seg svg { width: 20px; height: 14px; transition: transform .2s ease; }
+  .seg .seg-sep { width: 1px; margin: 5px 2px; background: var(--border-strong); }
+  /* "Auto" é um liga/desliga (não uma posição): aceso = ponto branco, sem fundo */
+  .seg button.auto { padding: 0 9px; }
+  .seg button.auto i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); transition: background-color .15s ease, box-shadow .15s ease; }
+  .seg button.auto[aria-pressed="true"] { background: transparent; color: var(--text); }
+  .seg button.auto[aria-pressed="true"]:hover { background: var(--surface-hover); }
+  .seg button.auto[aria-pressed="true"] i { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+
   .theme-toggle .icon-sun { display: none; }
   :root[data-theme="light"] .theme-toggle .icon-sun { display: block; }
   :root[data-theme="light"] .theme-toggle .icon-moon { display: none; }
 
-  /* ---------------- Painéis ---------------- */
+  /* ---------------- Painéis ----------------
+     Divisão ajustável: --a = parte do código, --b = parte do console (somam 100).
+     Os valores ficam no <html> (aplicados já no <head>, sem "pulo" ao carregar). */
   main {
     flex: 1;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 12px;
+    display: flex;
     padding: 0 20px;
     min-height: 0;
   }
+  main.arrastando { cursor: col-resize; user-select: none; }
   .pane {
+    flex: 1 1 0;
     display: flex;
     flex-direction: column;
     min-height: 0;
@@ -235,8 +277,33 @@
     border-radius: 14px;
     overflow: hidden;
     box-shadow: var(--shadow);
-    transition: border-color .3s ease, box-shadow .3s ease;
+    transition: flex-grow .45s cubic-bezier(.2, .8, .2, 1), border-color .3s ease, box-shadow .3s ease;
   }
+  .pane-editor { flex-grow: var(--a, 50); }
+  .pane-console { flex-grow: var(--b, 50); }
+  main.arrastando .pane { transition: border-color .3s ease, box-shadow .3s ease; }
+
+  /* divisória arrastável entre os painéis */
+  .divider {
+    flex: 0 0 12px;
+    display: grid;
+    place-items: center;
+    cursor: col-resize;
+    touch-action: none;
+    outline: none;
+  }
+  .divider::before {
+    content: "";
+    width: 2px;
+    height: 36px;
+    border-radius: 2px;
+    background: var(--faint);
+    transition: background-color .15s ease, height .2s ease, width .2s ease;
+  }
+  .divider:hover::before,
+  .divider:focus-visible::before,
+  main.arrastando .divider::before { background: var(--accent); height: 64px; }
+
   .pane-header {
     position: relative;
     height: 42px;
@@ -477,7 +544,18 @@
 
   @media (max-width: 760px) {
     .topbar { padding: 12px 16px; }
-    main { grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr 1fr; padding: 0 16px; gap: 10px; }
+    main { flex-direction: column; padding: 0 16px; }
+    main.arrastando, .divider { cursor: row-resize; }
+    .divider::before { width: 36px; height: 2px; }
+    .divider:hover::before,
+    .divider:focus-visible::before,
+    main.arrastando .divider::before { width: 64px; height: 2px; }
+    .seg svg { transform: rotate(90deg); }
+    /* topo no celular: [Exemplos | Parar | Executar] em cima, [foco | tema] embaixo */
+    .toolbar { flex: 1 1 100%; }
+    .toolbar select { flex: 1 1 120px; min-width: 0; }
+    .sep { display: none; }
+    #themeBtn { margin-left: auto; }
     .btn.primary kbd, .hide-sm { display: none; }
     .btn.primary { padding: 0 12px; }
     .statusbar { padding: 0 18px; gap: 14px; }
@@ -492,6 +570,12 @@
     var t = null;
     try { t = localStorage.getItem("portugol-tema"); } catch (e) {}
     if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    // divisão código/console salva (padrão: foco no código)
+    var f = null;
+    try { f = localStorage.getItem("portugol-foco"); } catch (e) {}
+    var a = Math.min(80, Math.max(20, parseInt(f, 10) || 70));
+    document.documentElement.style.setProperty("--a", a);
+    document.documentElement.style.setProperty("--b", 100 - a);
   })();
 </script>
 </head>
@@ -514,6 +598,22 @@
         Executar
         <kbd id="runKbd">Ctrl ↵</kbd>
       </button>
+      <span class="sep" aria-hidden="true"></span>
+      <div class="seg" role="group" aria-label="Foco da tela">
+        <button type="button" data-foco="codigo" aria-pressed="false" title="Priorizar o código" aria-label="Priorizar o código">
+          <svg viewBox="0 0 20 14" aria-hidden="true"><rect x="1" y="1" width="12" height="12" rx="2" fill="currentColor"/><rect x="15.25" y="1.75" width="3.5" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button type="button" data-foco="dividido" aria-pressed="false" title="Dividir igualmente" aria-label="Dividir igualmente">
+          <svg viewBox="0 0 20 14" aria-hidden="true"><rect x="1.75" y="1.75" width="7" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="11.25" y="1.75" width="7" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+        </button>
+        <button type="button" data-foco="console" aria-pressed="false" title="Priorizar o console" aria-label="Priorizar o console">
+          <svg viewBox="0 0 20 14" aria-hidden="true"><rect x="1.25" y="1.75" width="3.5" height="10.5" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><rect x="7" y="1" width="12" height="12" rx="2" fill="currentColor"/></svg>
+        </button>
+        <span class="seg-sep" aria-hidden="true"></span>
+        <button type="button" class="auto" id="autoFoco" aria-pressed="true" title="Foco automático: o console cresce durante a execução e o código volta quando termina">
+          <i aria-hidden="true"></i>Auto
+        </button>
+      </div>
       <button id="themeBtn" class="btn icon theme-toggle" title="Alternar tema claro/escuro" aria-label="Alternar tema claro/escuro">
         <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
@@ -521,7 +621,7 @@
     </div>
   </header>
 
-  <main>
+  <main id="ws">
     <section class="pane pane-editor">
       <div class="pane-header">
         <span class="title">
@@ -540,6 +640,7 @@
         </div>
       </div>
     </section>
+    <div class="divider" id="divider" role="separator" tabindex="0" aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" aria-valuenow="70" aria-label="Divisória entre código e console. Setas ajustam, Enter volta a 50/50." title="Arraste para ajustar · dois cliques: 50/50"></div>
     <section class="pane pane-console">
       <div class="pane-header">
         <span class="title">
@@ -2099,7 +2200,7 @@ atualizaGutter();
 </script>
 <script>
 /* ------------------------------------------------------------- CAMADA DE UI
-   Só visual: realce de sintaxe, linha atual, barra de status, tema e atalho.
+   Só visual: realce de sintaxe, linha atual, barra de status, foco da tela, tema e atalho.
    Não altera o interpretador — apenas lê o editor e clica nos botões existentes. */
 (function () {
   const code   = document.getElementById("code");
@@ -2201,6 +2302,115 @@ atualizaGutter();
       if (!runBtn.disabled) runBtn.click();
     }
   });
+
+  // ---- foco da tela: quanto da largura (altura, no celular) fica com o código
+  const ws         = document.getElementById("ws");
+  const divisoria  = document.getElementById("divider");
+  const autoBtn    = document.getElementById("autoFoco");
+  const stopBtn    = document.getElementById("stopBtn");
+  const consoleEl  = document.getElementById("console");
+  const paneCodigo = ws.querySelector(".pane-editor");
+  const paneCons   = ws.querySelector(".pane-console");
+  const botoesFoco = Array.from(document.querySelectorAll(".seg button[data-foco]"));
+  const FOCO = { codigo: 70, dividido: 50, console: 30 };   // % que fica com o código
+  const ler    = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const gravar = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const empilhado = () => getComputedStyle(ws).flexDirection === "column";
+  const rodando   = () => !stopBtn.disabled;
+
+  let pct = Math.min(80, Math.max(20, parseInt(ler("portugol-foco"), 10) || FOCO.codigo));
+  function aplicaFoco(p, salvar) {
+    pct = Math.round(Math.min(80, Math.max(20, p)));
+    const raiz = document.documentElement.style;
+    raiz.setProperty("--a", pct);
+    raiz.setProperty("--b", 100 - pct);
+    divisoria.setAttribute("aria-valuenow", String(pct));
+    divisoria.setAttribute("aria-orientation", empilhado() ? "horizontal" : "vertical");
+    for (const b of botoesFoco) b.setAttribute("aria-pressed", String(FOCO[b.dataset.foco] === pct));
+    if (salvar) gravar("portugol-foco", String(pct));   // só escolhas do usuário ficam salvas
+  }
+
+  // automático: executando -> console; terminou -> volta ao layout de antes
+  let autoLigado = ler("portugol-foco-auto") !== "0";
+  let repouso = null;            // layout do usuário antes do automático mexer
+  let mexeuNaExecucao = false;   // usuário ajustou durante a execução: não desfazer
+  let timerVolta = 0, inicioExec = 0;
+
+  function focoManual(p) {
+    clearTimeout(timerVolta);
+    if (rodando()) mexeuNaExecucao = true;
+    else repouso = null;
+    aplicaFoco(p, true);
+  }
+  for (const b of botoesFoco) b.addEventListener("click", () => focoManual(FOCO[b.dataset.foco]));
+
+  autoBtn.setAttribute("aria-pressed", String(autoLigado));
+  autoBtn.addEventListener("click", () => {
+    autoLigado = !autoLigado;
+    autoBtn.setAttribute("aria-pressed", String(autoLigado));
+    gravar("portugol-foco-auto", autoLigado ? "1" : "0");
+    if (!autoLigado) { clearTimeout(timerVolta); repouso = null; }
+  });
+
+  // o botão Parar fica habilitado exatamente enquanto o programa executa
+  new MutationObserver(() => {
+    if (rodando()) {
+      clearTimeout(timerVolta);
+      inicioExec = performance.now();
+      mexeuNaExecucao = false;
+      if (autoLigado) {
+        if (repouso === null) repouso = pct;
+        aplicaFoco(FOCO.console, false);
+      }
+    } else if (repouso !== null) {
+      if (mexeuNaExecucao) { repouso = null; return; }
+      const volta = repouso;
+      // programas instantâneos: deixa o console aberto ~1,5s para não "piscar"
+      const espera = Math.max(400, 1500 - (performance.now() - inicioExec));
+      timerVolta = setTimeout(() => { repouso = null; aplicaFoco(volta, false); }, espera);
+    }
+  }).observe(stopBtn, { attributes: true, attributeFilter: ["disabled"] });
+
+  // arrastar a divisória (mouse, toque ou caneta)
+  let arrastando = false;
+  divisoria.addEventListener("pointerdown", (e) => {
+    arrastando = true;
+    divisoria.setPointerCapture(e.pointerId);
+    ws.classList.add("arrastando");
+    e.preventDefault();
+  });
+  divisoria.addEventListener("pointermove", (e) => {
+    if (!arrastando) return;
+    const a = paneCodigo.getBoundingClientRect(), b = paneCons.getBoundingClientRect();
+    let p = empilhado()
+      ? (e.clientY - a.top) / (b.bottom - a.top) * 100
+      : (e.clientX - a.left) / (b.right - a.left) * 100;
+    for (const v of Object.values(FOCO)) if (Math.abs(p - v) < 2) p = v;   // "ímã" nas posições prontas
+    focoManual(p);
+  });
+  const solta = () => { arrastando = false; ws.classList.remove("arrastando"); };
+  divisoria.addEventListener("pointerup", solta);
+  divisoria.addEventListener("pointercancel", solta);
+  divisoria.addEventListener("dblclick", () => focoManual(FOCO.dividido));
+  divisoria.addEventListener("keydown", (e) => {
+    const menos = empilhado() ? "ArrowUp" : "ArrowLeft", mais = empilhado() ? "ArrowDown" : "ArrowRight";
+    if (e.key === menos) focoManual(pct - 5);
+    else if (e.key === mais) focoManual(pct + 5);
+    else if (e.key === "Enter") focoManual(FOCO.dividido);
+    else return;
+    e.preventDefault();
+  });
+  window.addEventListener("resize", () => divisoria.setAttribute("aria-orientation", empilhado() ? "horizontal" : "vertical"));
+
+  // console encolhendo/crescendo: se estava no fim, continua mostrando o fim
+  let grudado = true;
+  consoleEl.addEventListener("scroll", () => {
+    grudado = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 8;
+  });
+  if ("ResizeObserver" in window)
+    new ResizeObserver(() => { if (grudado) consoleEl.scrollTop = consoleEl.scrollHeight; }).observe(consoleEl);
+
+  aplicaFoco(pct, false);
 
   // ---- tema claro/escuro
   document.getElementById("themeBtn").addEventListener("click", () => {
