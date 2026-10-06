@@ -12,8 +12,6 @@
   :root {
     color-scheme: dark;
     --bg: #000000;
-    --grid-dot: rgba(255, 255, 255, .055);
-    --glow: rgba(255, 255, 255, .06);
     --panel: #0a0a0a;
     --surface: #111111;
     --surface-hover: #1a1a1a;
@@ -36,13 +34,15 @@
     --syn-kw: #ffffff;
     --syn-fn: #ffffff;
     --syn-type: #d4d4d4;
-    --syn-id: #b3b3b3;
-    --syn-str: #7a7a7a;
+    --syn-id: #c4c4c4;
+    --syn-str: #9a9a9a;
     --syn-num: #d4d4d4;
     --syn-bool: #ffffff;
     --syn-op: #ffffff;
-    --syn-punc: #555555;
-    --syn-com: #444444;
+    --syn-punc: #707070;
+    --syn-semi: #b0b0b0;   /* ';' é obrigatório: precisa aparecer */
+    --syn-com: #6b6b6b;
+    --gutter-text: #4d4d4d;
 
     --font-mono: "Geist Mono", "JetBrains Mono", "Fira Code", Consolas, "Courier New", monospace;
     --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -54,8 +54,6 @@
   :root[data-theme="light"] {
     color-scheme: light;
     --bg: #fafafa;
-    --grid-dot: rgba(0, 0, 0, .07);
-    --glow: rgba(0, 0, 0, 0);
     --panel: #ffffff;
     --surface: #ffffff;
     --surface-hover: #f2f2f2;
@@ -77,22 +75,21 @@
     --syn-kw: #000000;
     --syn-fn: #000000;
     --syn-type: #333333;
-    --syn-id: #4d4d4d;
-    --syn-str: #8a8a8a;
+    --syn-id: #3d3d3d;
+    --syn-str: #6b6b6b;
     --syn-num: #333333;
     --syn-bool: #000000;
     --syn-op: #000000;
-    --syn-punc: #a6a6a6;
-    --syn-com: #b8b8b8;
+    --syn-punc: #8c8c8c;
+    --syn-semi: #4d4d4d;
+    --syn-com: #949494;
+    --gutter-text: #b0b0b0;
   }
 
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background:
-      radial-gradient(900px 420px at 50% -120px, var(--glow), transparent 70%),
-      radial-gradient(var(--grid-dot) 1px, transparent 1px) 0 0 / 22px 22px,
-      var(--bg);
+    background: var(--bg);
     color: var(--text);
     font-family: var(--font-ui);
     -webkit-font-smoothing: antialiased;
@@ -340,7 +337,7 @@
     min-width: 52px;
     padding: var(--code-pad-y) 12px var(--code-pad-y) 14px;
     text-align: right;
-    color: var(--faint);
+    color: var(--gutter-text);
     font-family: var(--font-mono);
     font-size: 13px;
     line-height: var(--code-lh);
@@ -398,6 +395,7 @@
   .tk-opw  { color: var(--syn-op); }
   .tk-op, .tk-assign { color: var(--syn-op); }
   .tk-punc { color: var(--syn-punc); }
+  .tk-semi { color: var(--syn-semi); }
   .tk-com  { color: var(--syn-com); font-style: italic; }
 
   /* ---------------- Console ---------------- */
@@ -602,7 +600,7 @@ const KEYWORDS = new Set([
   "algoritmo","declare","inicio","fim","se","entao","senao",
   "enquanto","faca","para","ate","passo","leia","escreva","escreval",
   "e","ou","nao","mod","verdadeiro","falso","vetor","de","tipo","registro",
-  "procedimento","var",
+  "procedimento","var","funcao","retorne",
   "inteiro","real","logico","caractere","cadeia","literal"
 ]);
 const TYPES = new Set(["inteiro","real","logico","caractere","cadeia","literal"]);
@@ -656,17 +654,18 @@ function lex(src) {
       continue;
     }
 
-    // strings  "..."  ou  '...'
-    if (c === '"' || c === "'") {
-      const quote = c; i++;
+    // strings  "..."  ou  '...'  (aceita também aspas curvas “...” / ‘...’ coladas do Word/PDF)
+    if (c === '"' || c === "'" || "“”‘’".includes(c)) {
+      const quote = "“”".includes(c) ? "“”" : "‘’".includes(c) ? "‘’" : c;  // aspas que fecham
+      i++;
       let str = "";
-      while (i < n && src[i] !== quote) {
+      while (i < n && !quote.includes(src[i])) {
         if (src[i] === "\\") {
           const nx = src[i+1];
           if (nx === "n") str += "\n";
           else if (nx === "t") str += "\t";
           else if (nx === "\\") str += "\\";
-          else if (nx === quote) str += quote;
+          else if (quote.includes(nx)) str += nx;
           else str += nx;
           i += 2;
         } else {
@@ -695,6 +694,7 @@ function lex(src) {
     const two = src.substr(i, 2);
     if (two === "..") { push("range", ".."); i += 2; continue; }
     if (two === "<-") { push("op", "<-"); i += 2; continue; }
+    if (c === "←")    { push("op", "<-"); i++; continue; }   // seta unicode também atribui
     if (two === "<>") { push("op", "<>"); i += 2; continue; }
     if (two === "!=") { push("op", "<>"); i += 2; continue; }
     if (two === ">=") { push("op", ">="); i += 2; continue; }
@@ -765,17 +765,18 @@ function parse(tokens) {
     const nome = leNome("nome do algoritmo").raw;
     if (peek().type === "semi") next();   // ';' opcional depois do nome do algoritmo
 
-    // seções Tipo / Declare / Procedimento podem vir em qualquer ordem antes do Inicio
+    // seções Tipo / Declare / Procedimento / Funcao podem vir em qualquer ordem antes do Inicio
     const decls = [];
-    const procedimentos = Object.create(null);
-    while (isKw("tipo") || isKw("declare") || isKw("procedimento")) {
+    const procedimentos = Object.create(null);   // procedimentos e funções (mesmo espaço de nomes)
+    while (isKw("tipo") || isKw("declare") || isKw("procedimento") || isKw("funcao")) {
       if (isKw("tipo")) parseRegistroDef();
       else if (isKw("declare")) { next(); parseDeclsInto(decls); }
-      else parseProcedimento(procedimentos);
+      else parseRotina(procedimentos, peek().value);
     }
 
     expectKw("inicio");
     const corpo = parseBloco();
+    if (atEnd()) err("Faltou fechar o algoritmo com 'Fim Algoritmo.' no final do código.");
     expectKw("fim");
     expectKw("algoritmo");
     // aceita ".", ";" ou fim do arquivo apos "Fim Algoritmo"
@@ -790,22 +791,27 @@ function parse(tokens) {
       peek().type === "id" ||
       (peek().type === "kw" && tokens[p+1] &&
        (tokens[p+1].type === "colon" || tokens[p+1].type === "comma"));
+    const leVar = () => { const t = leNome("um nome de variável"); return { t, line: tokens[p-1].line }; };
     while (pareceDecl()) {
-      const names = [ leNome("um nome de variável") ];
-      while (peek().type === "comma") { next(); names.push(leNome("um nome de variável")); }
+      const names = [ leVar() ];
+      while (peek().type === "comma") { next(); names.push(leVar()); }
       expect("colon", "':' (para indicar o tipo)");
       const tipo = parseTipo();
       expect("semi", "';' ao final da declaração");
-      for (const nm of names) decls.push({ name: nm.key, raw: nm.raw, tipo });
+      for (const nm of names) decls.push({ name: nm.t.key, raw: nm.t.raw, tipo, line: nm.line });
     }
   }
 
   // ---- procedimento: Procedimento nome [(params)] [Declare ...] Inicio ... Fim procedimento;
-  function parseProcedimento(procs) {
-    expectKw("procedimento");
-    const nomeTok = leNome("nome do procedimento");
+  // ---- função:       Funcao nome [(params)] : tipo [Declare ...] Inicio ... retorne expr; ... Fim funcao;
+  let rotinaAtual = null;   // { kind, raw } enquanto lê o corpo de uma rotina
+  function parseRotina(procs, kind) {
+    const ehFuncao = kind === "funcao";
+    const rotulo = ehFuncao ? "função" : "procedimento";
+    expectKw(kind);
+    const nomeTok = leNome(`nome do ${rotulo}`);
     if (procs[nomeTok.key])
-      err(`Procedimento "${nomeTok.raw}" definido mais de uma vez.`);
+      err(`Já existe um procedimento ou função chamado "${nomeTok.raw}".`);
     const params = [];
     if (peek().type === "lparen") {
       next();
@@ -819,42 +825,77 @@ function parse(tokens) {
       }
       expect("rparen", "')' ao final dos parâmetros");
     }
+    let retorno = null;
+    if (ehFuncao) {
+      expect("colon", "':' e o tipo de retorno da função (ex: Funcao Quadrado(x : real) : real)");
+      retorno = parseTipoEscalar();
+    }
     const pdecls = [];
     if (isKw("declare")) { next(); parseDeclsInto(pdecls); }
+    const daRotina = `${ehFuncao ? "da função" : "do procedimento"} "${nomeTok.raw}"`;
+    for (const d of pdecls)
+      if (params.some(pr => pr.name === d.name))
+        throw new PortugolError(`"${d.raw}" já é parâmetro ${daRotina}. Dê outro nome para a variável local (ou use o próprio parâmetro).`, d.line);
     expectKw("inicio");
+    rotinaAtual = { kind, raw: nomeTok.raw };
     const corpo = parseBloco();
+    rotinaAtual = null;
+    if (atEnd()) err(`Faltou fechar ${ehFuncao ? "a função" : "o procedimento"} "${nomeTok.raw}" com 'Fim ${kind};'.`);
     expectKw("fim");
-    expectKw("procedimento");
-    if (peek().type === "semi" || peek().type === "dot") next();   // ';' depois de 'Fim procedimento'
-    procs[nomeTok.key] = { raw: nomeTok.raw, params, decls: pdecls, corpo };
+    expectKw(kind);
+    if (peek().type === "semi" || peek().type === "dot") next();   // ';' depois de 'Fim procedimento' / 'Fim funcao'
+    procs[nomeTok.key] = { raw: nomeTok.raw, kind, params, decls: pdecls, corpo, retorno };
   }
 
   // grupo de parâmetros:  [var] nome[, nome...] : <tipo escalar ou registro>
   function parseParamGroup(params) {
     let porRef = false;
     if (isKw("var")) { next(); porRef = true; }
-    const names = [ leNome("um nome de parâmetro") ];
-    while (peek().type === "comma") { next(); names.push(leNome("um nome de parâmetro")); }
+    const names = [];
+    const lePar = () => {
+      const t = leNome("um nome de parâmetro");
+      if (params.some(pr => pr.name === t.key) || names.some(nm => nm.key === t.key))
+        throw new PortugolError(`Parâmetro "${t.raw}" repetido.`, tokens[p-1].line);
+      names.push(t);
+    };
+    lePar();
+    while (peek().type === "comma") { next(); lePar(); }
     expect("colon", "':' para o tipo do parâmetro");
     const tipo = parseTipo();   // escalar, registro ou vetor
     for (const nm of names) params.push({ name: nm.key, raw: nm.raw, tipo, porRef });
   }
 
-  // chamada de procedimento como comando:  nome;  ou  nome(arg, arg, ...);
+  // argumentos de chamada:  ( expr, expr, ... )   — '(' ainda não consumido
+  function parseArgs() {
+    const args = [];
+    expect("lparen", "'('");
+    if (peek().type !== "rparen") {
+      args.push(parseExpr());
+      while (peek().type === "comma") { next(); args.push(parseExpr()); }
+    }
+    expect("rparen", "')' ao final dos argumentos");
+    return args;
+  }
+
+  // chamada de procedimento (ou função, descartando o valor) como comando:  nome;  ou  nome(arg, ...);
   function parseChamada() {
     const nomeTok = expect("id", "o nome de um procedimento").value;
     const line = tokens[p-1].line;
-    const args = [];
-    if (peek().type === "lparen") {
-      next();
-      if (peek().type !== "rparen") {
-        args.push(parseExpr());
-        while (peek().type === "comma") { next(); args.push(parseExpr()); }
-      }
-      expect("rparen", "')' ao final dos argumentos");
-    }
+    const args = peek().type === "lparen" ? parseArgs() : [];
     expect("semi", "';' ao final da chamada");
     return { type: "chamada", name: nomeTok.key, raw: nomeTok.raw, args, line };
+  }
+
+  // retorne expr;   (só dentro de função)
+  function parseRetorne() {
+    const line = peek().line;
+    if (!rotinaAtual || rotinaAtual.kind !== "funcao")
+      err("'retorne' só pode ser usado dentro de uma função.");
+    next();
+    if (peek().type === "semi") err("'retorne' precisa de um valor (ex: retorne x;).");
+    const expr = parseExpr();
+    expect("semi", "';' ao final do retorne");
+    return { type: "retorne", expr, line };
   }
 
   // ---- definição de registro:  Tipo Nome : registro  campo:tipo; ...  Fim registro;
@@ -943,6 +984,11 @@ function parse(tokens) {
         case "se":       return parseSe();
         case "para":     return parsePara();
         case "enquanto": return parseEnquanto();
+        case "retorne":  return parseRetorne();
+        case "inicio":
+          if (rotinaAtual)
+            err(`Faltou fechar ${rotinaAtual.kind === "funcao" ? "a função" : "o procedimento"} "${rotinaAtual.raw}" com 'Fim ${rotinaAtual.kind};' antes deste 'Inicio'.`);
+          // fallthrough
         default: err(`Comando inesperado: "${t.value}".`);
       }
     }
@@ -1115,6 +1161,9 @@ function parse(tokens) {
     if (t.type === "kw" && t.value === "falso") { next(); return { type:"bool", value: false, line: t.line }; }
     if (t.type === "id") {
       next();
+      // chamada de função dentro de expressão:  nome(arg, ...)
+      if (peek().type === "lparen")
+        return { type:"callf", name: t.value.key, raw: t.value.raw, args: parseArgs(), line: t.line };
       let node;
       if (peek().type === "lbracket") {
         const indices = parseIndices();
@@ -1175,6 +1224,11 @@ function* interpretar(programa) {
   const global = criaEscopo(null);
   let escopo = global;
 
+  // 'retorne' é sinalizado com throw e capturado na chamada da função
+  class RetornoSinal { constructor(valor) { this.valor = valor; } }
+  // estouro da pilha do JS (RangeError no Chrome, InternalError no Firefox) = recursão funda demais
+  const ehEstouroPilha = (e) => e instanceof RangeError || (e && e.name === "InternalError");
+
   // acha o escopo que declara 'name' (escopo atual; senão o global)
   function achaEscopo(name) {
     if (name in escopo.tipos) return escopo;
@@ -1186,7 +1240,7 @@ function* interpretar(programa) {
   function inicializaDecls(decls, esc) {
     for (const d of decls) {
       if (esc.tipos[d.name] !== undefined)
-        throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, undefined);
+        throw new PortugolError(`Variável "${d.raw}" declarada mais de uma vez.`, d.line);
       if (d.tipo && d.tipo.array) {
         const info = montaVetor(d.tipo, d.raw);
         esc.tipos[d.name] = info;
@@ -1274,8 +1328,14 @@ function* interpretar(programa) {
   // Respeita o escopo atual (locais + globais) e os parâmetros por referência (refs).
   function resolveRef(alvo, line) {
     const esc = achaEscopo(alvo.name);
-    if (!esc)
+    if (!esc) {
+      const rot = procedimentos[alvo.name];
+      if (rot && rot.kind === "funcao")
+        throw new PortugolError(`"${alvo.raw}" é uma função, não uma variável. Para chamá-la use parênteses: ${rot.raw}(...).`, line);
+      if (rot)
+        throw new PortugolError(`"${alvo.raw}" é um procedimento, não uma variável.`, line);
       throw new PortugolError(`Variável "${alvo.raw}" não foi declarada.`, line);
+    }
     const info = esc.tipos[alvo.name];
     let cont, key;
     if (alvo.name in esc.refs) { const r = esc.refs[alvo.name]; cont = r.container; key = r.key; }
@@ -1284,7 +1344,7 @@ function* interpretar(programa) {
     if (alvo.indices) {
       if (!(info && info.array))
         throw new PortugolError(`"${alvo.raw}" não é um vetor, então não aceita índice.`, line);
-      const idxs = alvo.indices.map(e => avalia(e));
+      const idxs = alvo.idxs || alvo.indices.map(e => avalia(e));   // idxs: já avaliados (com função)
       const off = calculaOffset(info, idxs, alvo.raw, line);
       const arr = cont[key];
       if (alvo.field) {
@@ -1339,15 +1399,79 @@ function* interpretar(programa) {
           indices: node.base.indices || null,
           field: node.field, fieldRaw: node.fieldRaw
         }, node.line);
-      case "un": {
-        const v = avalia(node.expr);
-        if (node.op === "-") return -numero(v, node.line);
-        if (node.op === "+") return  numero(v, node.line);
-        if (node.op === "nao") return !logico(v, node.line);
-      }
+      case "un": return aplicaUnario(node.op, avalia(node.expr), node.line);
       case "bin": return binario(node);
+      case "callf":   // só chega aqui onde não dá para executar código (ex: tamanho de vetor)
+        throw new PortugolError(`A função "${node.raw}" não pode ser chamada aqui.`, node.line);
       default: throw new PortugolError("Expressão desconhecida.", node.line);
     }
+  }
+
+  // a expressão tem chamada de função em algum lugar? (calculado uma vez por nó)
+  function temChamada(node) {
+    if (!node || typeof node !== "object") return false;
+    if (node._f === undefined) {
+      switch (node.type) {
+        case "callf": node._f = true; break;
+        case "un":    node._f = temChamada(node.expr); break;
+        case "bin":   node._f = temChamada(node.left) || temChamada(node.right); break;
+        case "index": node._f = node.indices.some(temChamada); break;
+        case "field": node._f = temChamada(node.base); break;
+        default:      node._f = false;
+      }
+    }
+    return node._f;
+  }
+
+  // avaliação que pode executar funções (que podem ter leia/escreva): generator.
+  // Sem chamada de função, cai direto no avalia() normal. Nos comandos usamos
+  //   temChamada(e) ? yield* avaliaG(e) : avalia(e)
+  // para nem criar o generator no caso comum (laços grandes ficam tão rápidos quanto antes).
+  function* avaliaG(node) {
+    if (!temChamada(node)) return avalia(node);
+    switch (node.type) {
+      case "callf": return yield* chamaRotina(node, true);
+      case "un": return aplicaUnario(node.op, yield* avaliaG(node.expr), node.line);
+      case "bin": {
+        const op = node.op;
+        if (op === "e")  return logico(yield* avaliaG(node.left), node.line) && logico(yield* avaliaG(node.right), node.line);
+        if (op === "ou") return logico(yield* avaliaG(node.left), node.line) || logico(yield* avaliaG(node.right), node.line);
+        const a = yield* avaliaG(node.left);
+        const b = yield* avaliaG(node.right);
+        return aplicaBinario(op, a, b, node.line);
+      }
+      case "index":
+        return leRef({ name: node.name, raw: node.raw, indices: node.indices, idxs: yield* avaliaLista(node.indices), field: null }, node.line);
+      case "field": {
+        const b = node.base;
+        return leRef({
+          name: b.name, raw: b.raw, indices: b.indices || null,
+          idxs: b.indices ? yield* avaliaLista(b.indices) : null,
+          field: node.field, fieldRaw: node.fieldRaw
+        }, node.line);
+      }
+      default: return avalia(node);
+    }
+  }
+  function* avaliaLista(exprs) {
+    const out = [];
+    for (const e of exprs) out.push(yield* avaliaG(e));
+    return out;
+  }
+  // destino (lvalue) com função nos índices: avalia os índices antes de resolver
+  function alvoTemChamada(alvo) {
+    return !!(alvo && alvo.indices && alvo.indices.some(temChamada));
+  }
+  function* preparaAlvo(alvo) {
+    if (!alvoTemChamada(alvo)) return alvo;
+    return Object.assign({}, alvo, { idxs: yield* avaliaLista(alvo.indices) });
+  }
+
+  function aplicaUnario(op, v, line) {
+    if (op === "-") return -numero(v, line);
+    if (op === "+") return  numero(v, line);
+    if (op === "nao") return !logico(v, line);
+    throw new PortugolError(`Operador desconhecido: ${op}.`, line);
   }
 
   function numero(v, line) {
@@ -1364,35 +1488,36 @@ function* interpretar(programa) {
     if (op === "e")  return logico(avalia(node.left), node.line) && logico(avalia(node.right), node.line);
     if (op === "ou") return logico(avalia(node.left), node.line) || logico(avalia(node.right), node.line);
 
-    const a = avalia(node.left);
-    const b = avalia(node.right);
+    return aplicaBinario(op, avalia(node.left), avalia(node.right), node.line);
+  }
 
+  function aplicaBinario(op, a, b, line) {
     if (op === "=")  return igual(a, b);
     if (op === "<>") return !igual(a, b);
 
     if (op === "+") {
       if (typeof a === "string" || typeof b === "string") return formataValor(a) + formataValor(b);
-      return numero(a, node.line) + numero(b, node.line);
+      return numero(a, line) + numero(b, line);
     }
-    if (op === "-") return numero(a, node.line) - numero(b, node.line);
-    if (op === "*") return numero(a, node.line) * numero(b, node.line);
+    if (op === "-") return numero(a, line) - numero(b, line);
+    if (op === "*") return numero(a, line) * numero(b, line);
     if (op === "/") {
-      const d = numero(b, node.line);
-      if (d === 0) throw new PortugolError("Divisão por zero.", node.line);
-      return numero(a, node.line) / d;
+      const d = numero(b, line);
+      if (d === 0) throw new PortugolError("Divisão por zero.", line);
+      return numero(a, line) / d;
     }
     if (op === "mod") {
-      const d = numero(b, node.line);
-      if (d === 0) throw new PortugolError("Resto de divisão por zero.", node.line);
-      return numero(a, node.line) % d;
+      const d = numero(b, line);
+      if (d === 0) throw new PortugolError("Resto de divisão por zero.", line);
+      return numero(a, line) % d;
     }
     // relacionais
-    const x = numero(a, node.line), y = numero(b, node.line);
+    const x = numero(a, line), y = numero(b, line);
     if (op === ">")  return x >  y;
     if (op === "<")  return x <  y;
     if (op === ">=") return x >= y;
     if (op === "<=") return x <= y;
-    throw new PortugolError(`Operador desconhecido: ${op}.`, node.line);
+    throw new PortugolError(`Operador desconhecido: ${op}.`, line);
   }
 
   function igual(a, b) {
@@ -1433,30 +1558,33 @@ function* interpretar(programa) {
 
     switch (s.type) {
       case "store": {
-        const ref = localAlvo(s.alvo, s.line);
-        ref.container[ref.key] = coageEscalar(ref.tipoEsc, avalia(s.expr), s.line, ref.rotulo);
+        const ref = localAlvo(alvoTemChamada(s.alvo) ? yield* preparaAlvo(s.alvo) : s.alvo, s.line);
+        ref.container[ref.key] = coageEscalar(ref.tipoEsc, (temChamada(s.expr) ? yield* avaliaG(s.expr) : avalia(s.expr)), s.line, ref.rotulo);
         break;
       }
+      case "retorne":
+        throw new RetornoSinal(yield* avaliaG(s.expr));
       case "leia": {
         for (const alvo of s.alvos) {
-          const ref = localAlvo(alvo, s.line);
+          const ref = localAlvo(yield* preparaAlvo(alvo), s.line);
           const txt = yield { kind: "input", name: ref.rotulo, tipo: ref.tipoEsc };
           ref.container[ref.key] = converteEntrada(txt, ref.tipoEsc, ref.rotulo, s.line);
         }
         break;
       }
       case "escreva": {
-        const texto = s.args.map(a => formataValor(avalia(a))).join("");
+        let texto = "";
+        for (const a of s.args) texto += formataValor((temChamada(a) ? yield* avaliaG(a) : avalia(a)));
         yield { kind: "output", text: texto + "\n" };
         break;
       }
       case "se": {
-        if (logico(avalia(s.cond), s.line)) yield* execBloco(s.entao);
+        if (logico((temChamada(s.cond) ? yield* avaliaG(s.cond) : avalia(s.cond)), s.line)) yield* execBloco(s.entao);
         else if (s.senao) yield* execBloco(s.senao);
         break;
       }
       case "enquanto": {
-        while (logico(avalia(s.cond), s.line)) {
+        while (logico((temChamada(s.cond) ? yield* avaliaG(s.cond) : avalia(s.cond)), s.line)) {
           if (++passos > MAX_PASSOS) throw new PortugolError("Execução interrompida: possível laço infinito.", s.line);
           yield* execBloco(s.corpo);
         }
@@ -1464,13 +1592,13 @@ function* interpretar(programa) {
       }
       case "para": {
         const refc = localAlvo({ name: s.varName, raw: s.raw, indices: null, field: null }, s.line);
-        const inicio = numero(avalia(s.inicio), s.line);
-        const limite = numero(avalia(s.fim), s.line);
+        const inicio = numero((temChamada(s.inicio) ? yield* avaliaG(s.inicio) : avalia(s.inicio)), s.line);
+        const limite = numero((temChamada(s.fim) ? yield* avaliaG(s.fim) : avalia(s.fim)), s.line);
         // 'passo' é OPCIONAL: só há incremento automático quando ele é escrito.
         // Sem 'passo', quem avança a variável de controle é o próprio corpo
         // (ex: i <- i + 1); não incrementar => laço roda até o limite de passos.
         const temPasso = s.passo != null;
-        const passo = temPasso ? numero(avalia(s.passo), s.line) : 0;
+        const passo = temPasso ? numero((temChamada(s.passo) ? yield* avaliaG(s.passo) : avalia(s.passo)), s.line) : 0;
         if (temPasso && passo === 0) throw new PortugolError("O 'passo' não pode ser zero.", s.line);
         // direção da condição de parada: pelo sinal do passo, ou (sem passo) por inicio/limite
         const subindo = temPasso ? (passo > 0) : (inicio <= limite);
@@ -1483,52 +1611,73 @@ function* interpretar(programa) {
         }
         break;
       }
-      case "chamada": {
-        const proc = procedimentos[s.name];
-        if (!proc)
-          throw new PortugolError(`Procedimento "${s.raw}" não foi definido.`, s.line);
-        if (s.args.length !== proc.params.length)
-          throw new PortugolError(`O procedimento "${proc.raw}" espera ${proc.params.length} argumento(s), mas recebeu ${s.args.length}.`, s.line);
-
-        const local = criaEscopo(global);
-        // vincula os parâmetros avaliando os argumentos no escopo do CHAMADOR (escopo atual)
-        for (let k = 0; k < proc.params.length; k++) {
-          const par = proc.params[k], arg = s.args[k];
-          if (par.porRef) {
-            const alvoArg = argComoAlvo(arg);
-            if (!alvoArg)
-              throw new PortugolError(`O parâmetro "${par.raw}" é por referência (var); passe uma variável, não uma expressão.`, s.line);
-            const r = resolveRef(alvoArg, s.line);
-            checaTipoParam(par, r.info, s.line);
-            local.tipos[par.name] = r.info;
-            local.refs[par.name] = { container: r.container, key: r.key };
-          } else if (par.tipo && (par.tipo.record || par.tipo.array)) {
-            const alvoArg = argComoAlvo(arg);
-            if (!alvoArg)
-              throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(par.tipo)}; passe uma variável.`, s.line);
-            const r = resolveRef(alvoArg, s.line);
-            checaTipoParam(par, r.info, s.line);
-            local.tipos[par.name] = r.info;                        // info real (com dims, se vetor)
-            local.store[par.name] = copiaValor(r.info, r.container[r.key]);  // cópia independente
-          } else {
-            const valor = avalia(arg);
-            local.tipos[par.name] = par.tipo;
-            local.store[par.name] = coageEscalar(par.tipo, valor, s.line, par.raw);
-          }
-        }
-
-        const salvo = escopo;
-        escopo = local;
-        try {
-          inicializaDecls(proc.decls, local);
-          yield* execBloco(proc.corpo);
-        } finally {
-          escopo = salvo;
-        }
+      case "chamada":
+        yield* chamaRotina(s, false);   // função chamada como comando: valor descartado
         break;
-      }
       default: throw new PortugolError(`Comando desconhecido: ${s.type}.`, s.line);
     }
+  }
+
+  // ---- chamada de procedimento / função ----
+  // querValor = true quando a chamada está numa expressão (precisa ser função)
+  function* chamaRotina(s, querValor) {
+    const proc = procedimentos[s.name];
+    if (!proc) {
+      if (querValor) throw new PortugolError(`Função "${s.raw}" não foi definida.`, s.line);
+      throw new PortugolError(`Procedimento "${s.raw}" não foi definido.`, s.line);
+    }
+    const ehFuncao = proc.kind === "funcao";
+    if (querValor && !ehFuncao)
+      throw new PortugolError(`"${proc.raw}" é um procedimento e não devolve valor; não dá pra usá-lo numa expressão.`, s.line);
+    const oQue = ehFuncao ? `A função "${proc.raw}"` : `O procedimento "${proc.raw}"`;
+    if (s.args.length !== proc.params.length)
+      throw new PortugolError(`${oQue} espera ${proc.params.length} argumento(s), mas recebeu ${s.args.length}.`, s.line);
+
+    const local = criaEscopo(global);
+    // vincula os parâmetros avaliando os argumentos no escopo do CHAMADOR (escopo atual)
+    for (let k = 0; k < proc.params.length; k++) {
+      const par = proc.params[k], arg = s.args[k];
+      if (par.porRef) {
+        const alvoArg = argComoAlvo(arg);
+        if (!alvoArg)
+          throw new PortugolError(`O parâmetro "${par.raw}" é por referência (var); passe uma variável, não uma expressão.`, s.line);
+        const r = resolveRef(yield* preparaAlvo(alvoArg), s.line);
+        checaTipoParam(par, r.info, s.line);
+        local.tipos[par.name] = r.info;
+        local.refs[par.name] = { container: r.container, key: r.key };
+      } else if (par.tipo && (par.tipo.record || par.tipo.array)) {
+        const alvoArg = argComoAlvo(arg);
+        if (!alvoArg)
+          throw new PortugolError(`O parâmetro "${par.raw}" é ${nomeTipo(par.tipo)}; passe uma variável.`, s.line);
+        const r = resolveRef(yield* preparaAlvo(alvoArg), s.line);
+        checaTipoParam(par, r.info, s.line);
+        local.tipos[par.name] = r.info;                        // info real (com dims, se vetor)
+        local.store[par.name] = copiaValor(r.info, r.container[r.key]);  // cópia independente
+      } else {
+        const valor = yield* avaliaG(arg);
+        local.tipos[par.name] = par.tipo;
+        local.store[par.name] = coageEscalar(par.tipo, valor, s.line, par.raw);
+      }
+    }
+
+    const salvo = escopo;
+    escopo = local;
+    let retorno = null;
+    try {
+      inicializaDecls(proc.decls, local);
+      yield* execBloco(proc.corpo);
+    } catch (e) {
+      if (ehEstouroPilha(e))
+        throw new PortugolError(`Chamadas demais uma dentro da outra em "${proc.raw}". A recursão tem condição de parada?`, s.line);
+      if (!(e instanceof RetornoSinal)) throw e;
+      retorno = e;
+    } finally {
+      escopo = salvo;
+    }
+    if (!ehFuncao) return undefined;
+    if (!retorno)
+      throw new PortugolError(`A função "${proc.raw}" terminou sem 'retorne'.`, s.line);
+    return coageEscalar(proc.retorno, retorno.valor, s.line, `retorno de ${proc.raw}`);
   }
 
   // ---- helpers de procedimento ----
@@ -1892,6 +2041,43 @@ Inicio
 
     escreva("Depois da troca: A = ", A, ", B = ", B);
 Fim Algoritmo.`,
+
+  "Função (quadrado)": `Algoritmo Eleva;
+
+Declare
+    numero : real;
+
+Funcao Quadrado(x : real) : real
+Inicio
+    x <- x * x;
+    retorne x;
+Fim funcao;
+
+Inicio
+    escreva("Informe um valor:");
+    leia(numero);
+    numero <- Quadrado(numero);
+    escreva(numero);
+Fim Algoritmo.`,
+
+  "Função recursiva (fatorial)": `Algoritmo Fatorial
+
+Declare
+    n : inteiro;
+
+Funcao Fat(k : inteiro) : inteiro
+Inicio
+    se k <= 1 entao
+        retorne 1;
+    fim se;
+    retorne k * Fat(k - 1);
+Fim funcao;
+
+Inicio
+    escreva("Fatorial de qual número?");
+    leia(n);
+    escreva(n, "! = ", Fat(n));
+Fim Algoritmo.`,
 };
 
 for (const nome of Object.keys(EXEMPLOS)) {
@@ -1929,7 +2115,7 @@ atualizaGutter();
   const FN   = new Set(["leia", "escreva", "escreval"]);
   const BOOL = new Set(["verdadeiro", "falso"]);
   const OPW  = new Set(["e", "ou", "nao", "mod"]);
-  const RE = /(\/\*[\s\S]*?(?:\*\/|$))|(\/\/[^\n]*)|(\{[^}]*\}?)|("(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?)|(\d+(?:\.\d+)?)|([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*)|(<-|<=|>=|<>|!=|[=<>+\-*\/%])|([;:,()[\].])/g;
+  const RE = /(\/\*[\s\S]*?(?:\*\/|$))|(\/\/[^\n]*)|(\{[^}]*\}?)|("(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[“”](?:\\[\s\S]|[^“”\\])*[“”]?|[‘’](?:\\[\s\S]|[^‘’\\])*[‘’]?)|(\d+(?:\.\d+)?)|([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*)|(<-|←|<=|>=|<>|!=|[=<>+\-*\/%])|([;:,()[\].])/g;
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   function classe(m) {
@@ -1945,8 +2131,8 @@ atualizaGutter();
       if (KEYWORDS.has(k)) return "kw";
       return "id";
     }
-    if (m[7]) return m[7] === "<-" ? "assign" : "op";
-    return "punc";
+    if (m[7]) return m[7] === "<-" || m[7] === "←" ? "assign" : "op";
+    return m[8] === ";" ? "semi" : "punc";
   }
 
   function realca() {
