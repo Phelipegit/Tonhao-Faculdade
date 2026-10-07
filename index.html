@@ -710,7 +710,7 @@ class PortugolError extends Error {
 const KEYWORDS = new Set([
   "algoritmo","declare","inicio","fim","se","entao","senao",
   "enquanto","faca","para","ate","passo","leia","escreva","escreval",
-  "e","ou","nao","mod","verdadeiro","falso","vetor","de","tipo","registro",
+  "e","ou","nao","mod","div","verdadeiro","falso","vetor","de","tipo","registro",
   "procedimento","var","funcao","retorne",
   "inteiro","real","logico","caractere","cadeia","literal"
 ]);
@@ -1249,10 +1249,9 @@ function parse(tokens) {
   }
   function parseMul() {
     let left = parseUnario();
-    while ((peek().type === "op" && ["*","/","%"].includes(peek().value)) || isKw("mod")) {
-      const op = isKw("mod") ? "mod" : next().value;
-      if (op === "mod") next();
-      const line = tokens[p-1] ? tokens[p-1].line : peek().line;
+    while ((peek().type === "op" && ["*","/","%"].includes(peek().value)) || isKw("mod") || isKw("div")) {
+      const op = next().value;   // "*", "/", "%" ou as palavras "mod" / "div"
+      const line = tokens[p-1].line;
       left = { type:"bin", op: op === "%" ? "mod" : op, left, right: parseUnario(), line };
     }
     return left;
@@ -1621,6 +1620,11 @@ function* interpretar(programa) {
       const d = numero(b, line);
       if (d === 0) throw new PortugolError("Resto de divisão por zero.", line);
       return numero(a, line) % d;
+    }
+    if (op === "div") {
+      const d = numero(b, line);
+      if (d === 0) throw new PortugolError("Divisão inteira por zero.", line);
+      return Math.trunc(numero(a, line) / d);   // divisão inteira: descarta a parte decimal (7 div 2 = 3)
     }
     // relacionais
     const x = numero(a, line), y = numero(b, line);
@@ -2189,6 +2193,19 @@ Inicio
     leia(n);
     escreva(n, "! = ", Fat(n));
 Fim Algoritmo.`,
+
+  "Div e mod (horas e minutos)": `Algoritmo HorasMinutos
+
+Declare
+    total, horas, minutos : inteiro;
+
+Inicio
+    escreva("Quantos minutos?");
+    leia(total);
+    horas <- total div 60;
+    minutos <- total mod 60;
+    escreva(total, " minutos = ", horas, "h ", minutos, "min");
+Fim Algoritmo.`,
 };
 
 for (const nome of Object.keys(EXEMPLOS)) {
@@ -2225,7 +2242,7 @@ atualizaGutter();
   // ---- realce de sintaxe (tokenização própria, tolerante a código incompleto)
   const FN   = new Set(["leia", "escreva", "escreval"]);
   const BOOL = new Set(["verdadeiro", "falso"]);
-  const OPW  = new Set(["e", "ou", "nao", "mod"]);
+  const OPW  = new Set(["e", "ou", "nao", "mod", "div"]);
   const RE = /(\/\*[\s\S]*?(?:\*\/|$))|(\/\/[^\n]*)|(\{[^}]*\}?)|("(?:\\[\s\S]|[^"\\])*"?|'(?:\\[\s\S]|[^'\\])*'?|[“”](?:\\[\s\S]|[^“”\\])*[“”]?|[‘’](?:\\[\s\S]|[^‘’\\])*[‘’]?)|(\d+(?:\.\d+)?)|([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*)|(<-|←|<=|>=|<>|!=|[=<>+\-*\/%])|([;:,()[\].])/g;
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
